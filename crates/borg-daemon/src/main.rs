@@ -9,27 +9,36 @@ use colored::*;
 use eyre::{Context, Result};
 use log::info;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 
 mod cli;
 mod config;
+mod jina;
+mod markdown;
+mod pipeline;
 mod routes;
+mod transcription_client;
+mod url_router;
+mod youtube;
 
 use cli::Cli;
 use config::Config;
 
-fn build_router() -> Router {
+fn build_router(config: Arc<Config>) -> Router {
     Router::new()
         .route("/health", get(routes::health))
         .route("/ingest", post(routes::ingest))
+        .with_state(config)
 }
 
-async fn run_server(config: &Config) -> Result<()> {
+async fn run_server(config: Config) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
         .context("Invalid server address")?;
 
-    let app = build_router();
+    let config = Arc::new(config);
+    let app = build_router(config);
 
     println!("{} borg-daemon listening on {}", "-->".green(), addr.to_string().cyan());
 
@@ -55,7 +64,7 @@ async fn main() -> Result<()> {
         println!("{}", "Verbose mode enabled".yellow());
     }
 
-    run_server(&config).await
+    run_server(config).await
 }
 
 #[cfg(test)]
@@ -65,17 +74,21 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
+    fn test_router() -> Router {
+        build_router(Arc::new(Config::default()))
+    }
+
     #[tokio::test]
     async fn test_health_endpoint() {
-        let app = build_router();
+        let app = test_router();
         let req = Request::builder().uri("/health").body(Body::empty()).expect("request");
         let resp = app.oneshot(req).await.expect("response");
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn test_ingest_endpoint_stub() {
-        let app = build_router();
+    async fn test_ingest_endpoint() {
+        let app = test_router();
         let body = serde_json::json!({"url": "https://youtube.com/watch?v=test"});
         let req = Request::builder()
             .method("POST")
