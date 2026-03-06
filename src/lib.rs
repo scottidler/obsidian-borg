@@ -2,61 +2,56 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
+pub mod cli;
+pub mod config;
+pub mod error;
+pub mod health;
+pub mod jina;
+pub mod logging;
+pub mod markdown;
+pub mod pipeline;
+pub mod routes;
+pub mod transcription_client;
+pub mod types;
+pub mod url_router;
+pub mod youtube;
+
 use axum::Router;
 use axum::routing::{get, post};
-use clap::Parser;
+use colored::*;
 use eyre::{Context, Result};
-use log::info;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 
-mod cli;
-mod config;
-mod routes;
-mod transcribe;
-
-use cli::Cli;
 use config::Config;
-use transcribe::{SharedTranscriber, create_transcriber};
 
-fn build_router(transcriber: SharedTranscriber) -> Router {
+pub fn build_router(config: Arc<Config>) -> Router {
     Router::new()
         .route("/health", get(routes::health))
-        .route("/transcribe", post(routes::transcribe))
-        .with_state(transcriber)
+        .route("/ingest", post(routes::ingest))
+        .with_state(config)
 }
 
-async fn run_server(config: &Config) -> Result<()> {
+pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
         .context("Invalid server address")?;
 
-    let transcriber = create_transcriber();
-    info!("Transcriber backend: {}", transcriber.name());
+    let config = Arc::new(config);
+    let app = build_router(config);
 
-    let app = build_router(transcriber);
-
-    println!("borg-transcriber listening on {addr}");
+    println!(
+        "{} obsidian-borg listening on {}",
+        "-->".green(),
+        addr.to_string().cyan()
+    );
 
     let listener = TcpListener::bind(addr).await.context("Failed to bind to address")?;
 
     axum::serve(listener, app).await.context("Server error")?;
 
     Ok(())
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    borg_core::setup_logging("borg-transcriber").context("Failed to setup logging")?;
-
-    let cli = Cli::parse();
-
-    let config: Config =
-        borg_core::load_config("borg-transcriber", cli.config.as_ref()).context("Failed to load configuration")?;
-
-    info!("Starting borg-transcriber with config from: {:?}", cli.config);
-
-    run_server(&config).await
 }
 
 #[cfg(test)]
@@ -67,7 +62,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_router() -> Router {
-        build_router(create_transcriber())
+        build_router(Arc::new(Config::default()))
     }
 
     #[tokio::test]
@@ -79,16 +74,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_transcribe_endpoint() {
+    async fn test_ingest_endpoint() {
         let app = test_router();
-        let body = serde_json::json!({
-            "audio_bytes": [1, 2, 3],
-            "language": "en",
-            "format": "Mp3"
-        });
+        let body = serde_json::json!({"url": "https://youtube.com/watch?v=test"});
         let req = Request::builder()
             .method("POST")
-            .uri("/transcribe")
+            .uri("/ingest")
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_string(&body).expect("json")))
             .expect("request");

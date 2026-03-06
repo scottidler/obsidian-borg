@@ -2,9 +2,9 @@ use crate::config::Config;
 use crate::jina;
 use crate::markdown::{self, ContentType, NoteContent};
 use crate::transcription_client::TranscriptionClient;
+use crate::types::{AudioFormat, IngestResult, IngestStatus};
 use crate::url_router::{self, UrlType};
 use crate::youtube;
-use borg_core::types::{AudioFormat, IngestResult, IngestStatus};
 use eyre::{Context, Result};
 use std::path::PathBuf;
 
@@ -70,7 +70,7 @@ async fn process_youtube(url: &str, config: &Config) -> Result<(String, String, 
         None => {
             log::info!("No auto-subs, extracting audio for: {}", metadata.title);
             // Extract audio and transcribe via Tier 2/3
-            let temp_dir = std::env::temp_dir().join("borg-daemon");
+            let temp_dir = std::env::temp_dir().join("obsidian-borg");
             std::fs::create_dir_all(&temp_dir)?;
             let audio_path = youtube::extract_audio(url, &temp_dir.to_string_lossy())?;
             let audio_bytes = std::fs::read(&audio_path)?;
@@ -94,14 +94,12 @@ async fn process_youtube(url: &str, config: &Config) -> Result<(String, String, 
         duration_secs: metadata.duration_secs,
     };
 
-    // For now, use the transcript as the summary (LLM summarization is future work)
     Ok((metadata.title, transcript, content_type))
 }
 
 async fn process_article(url: &str) -> Result<(String, String, ContentType)> {
     let article_md = jina::fetch_article_markdown(url).await?;
 
-    // Extract title from first markdown heading or use URL
     let title = article_md
         .lines()
         .find(|line| line.starts_with("# "))

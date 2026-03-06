@@ -2,15 +2,17 @@ use eyre::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-pub fn setup_logging(app_name: &str) -> Result<()> {
+const APP_NAME: &str = "obsidian-borg";
+
+pub fn setup_logging() -> Result<()> {
     let log_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(app_name)
+        .join(APP_NAME)
         .join("logs");
 
     fs::create_dir_all(&log_dir).context("Failed to create log directory")?;
 
-    let log_file = log_dir.join(format!("{app_name}.log"));
+    let log_file = log_dir.join(format!("{APP_NAME}.log"));
 
     let target = Box::new(
         fs::OpenOptions::new()

@@ -1,4 +1,4 @@
-use borg_core::types::{AudioFormat, TranscriptionRequest, TranscriptionResponse};
+use crate::types::{AudioFormat, TranscriptionRequest, TranscriptionResponse};
 use eyre::{Context, Result};
 use std::time::Duration;
 
@@ -27,14 +27,14 @@ impl TranscriptionClient {
         format: AudioFormat,
         language: Option<String>,
     ) -> Result<TranscriptionResponse> {
-        // Tier 2: Try borg-transcriber first
+        // Tier 2: Try remote transcriber first
         match self.try_transcriber(&audio_bytes, &format, &language).await {
             Ok(response) => {
-                log::info!("Transcription via borg-transcriber succeeded");
+                log::info!("Transcription via remote transcriber succeeded");
                 return Ok(response);
             }
             Err(e) => {
-                log::warn!("borg-transcriber failed, falling back to Groq: {e}");
+                log::warn!("Remote transcriber failed, falling back to Groq: {e}");
             }
         }
 
@@ -68,10 +68,10 @@ impl TranscriptionClient {
             .json(&request)
             .send()
             .await
-            .context("Failed to reach borg-transcriber")?;
+            .context("Failed to reach remote transcriber")?;
 
         if !response.status().is_success() {
-            eyre::bail!("borg-transcriber returned status {}", response.status());
+            eyre::bail!("Remote transcriber returned status {}", response.status());
         }
 
         response

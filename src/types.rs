@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Sent from borg-daemon to borg-transcriber
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranscriptionRequest {
     pub audio_bytes: Vec<u8>,
@@ -15,7 +14,6 @@ pub enum AudioFormat {
     Ogg,
 }
 
-/// Returned from borg-transcriber to borg-daemon
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranscriptionResponse {
     pub text: String,
@@ -23,7 +21,6 @@ pub struct TranscriptionResponse {
     pub duration_secs: f64,
 }
 
-/// Sent to borg-daemon's /ingest endpoint
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestRequest {
     pub url: String,
@@ -37,7 +34,6 @@ pub enum Priority {
     High,
 }
 
-/// Returned from /ingest
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestResult {
     pub status: IngestStatus,

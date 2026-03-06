@@ -419,6 +419,40 @@ External runtime dependencies:
 - [x] ~~Should the daemon persist a processing queue to disk (SQLite) or is an in-memory Tokio channel sufficient?~~ SQLite. Survives daemon restarts, enables `/status/:id` lookups, and provides a history of processed URLs.
 - [x] ~~Tag schema: should tags come from a fixed vocabulary file or be fully LLM-generated?~~ Hybrid. Common/canonical tags are defined in the config file (e.g. `#ai`, `#rust`, `#youtube`). The LLM is also free to generate new tags, but is guided by schema and naming conventions (e.g. lowercase, kebab-case, no redundant prefixes). The config tags act as a preferred vocabulary, not a hard constraint.
 
+## Addendum: borg-transcriber Should Be C++ (2026-03-06)
+
+During implementation it became clear that wrapping whisper.cpp in Rust via `whisper-rs` is the wrong call. The current Rust transcriber exists as a stub in the workspace but should be rewritten as a native C++ service before real deployment.
+
+### Why Rust is wrong for this crate
+
+The transcriber does exactly three things: accept audio over HTTP, run whisper.cpp inference, return JSON. whisper.cpp is already C++. The Rust path to get there is:
+
+```
+Rust code -> whisper-rs (safe wrapper) -> whisper-rs-sys (bindgen FFI) -> whisper.cpp (C++)
+                                               |
+                                          build.rs runs cmake to compile whisper.cpp
+                                          bindgen + libclang to generate extern "C" bindings
+```
+
+Three layers of wrapping to call a C++ library. And the build chain drags in `bindgen`, `cmake`, `clang-sys`, `libclang-dev`, `whisper-rs-sys` — all fragile, all slow, all unnecessary when you could just... write C++.
+
+### Why it doesn't matter for the workspace
+
+The daemon talks to the transcriber over HTTP with JSON. The "shared types" in `borg-core` (`TranscriptionRequest`, `TranscriptionResponse`) define a JSON schema, not a compile-time contract. The daemon doesn't care what language the transcriber is written in. A C++ service returning the same JSON is indistinguishable from the Rust stub.
+
+### Proposed approach
+
+- Replace `crates/borg-transcriber/` with a C++ project (cmake-based)
+- Use [cpp-httplib](https://github.com/yhirose/cpp-httplib) (header-only HTTP server) or similar
+- Call whisper.cpp directly — no FFI, no bindgen, no Rust in the middle
+- Link cuBLAS/CUDA natively for the 4090
+- Same JSON API contract, same systemd unit, same Tailscale networking
+- Could live at `services/borg-transcriber/` to distinguish from Rust crates
+
+### What stays in Rust
+
+Everything on the daemon side: `borg-core` (shared types/config), `borg-daemon` (HTTP server, pipeline, yt-dlp, Jina, Groq fallback, markdown output). Rust is the right choice there — it's an I/O-bound async service with many integrations. The transcriber is a GPU-bound C++ wrapper and should be written accordingly.
+
 ## References
 
 - [Obsidian Ingestion Ideas](../obsidian-ingestion-ideas.md) - Original brainstorm document

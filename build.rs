@@ -11,7 +11,10 @@ fn main() {
                 Err(std::io::Error::other("git describe failed"))
             }
         })
-        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        .unwrap_or_else(|_| {
+            // Fallback to Cargo.toml version when git describe fails
+            env!("CARGO_PKG_VERSION").to_string()
+        });
 
     println!("cargo:rustc-env=GIT_DESCRIBE={}", git_describe);
     println!("cargo:rerun-if-changed=.git/HEAD");

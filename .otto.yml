@@ -14,14 +14,14 @@ tasks:
     help: "Run all quality checks (compile, clippy, format)"
     bash: |
       echo "=== Checking compilation ==="
-      cargo check --workspace --all-targets --all-features
+      cargo check --all-targets
       echo ""
       echo "=== Running Clippy ==="
-      cargo clippy --workspace --all-targets --all-features -- -D warnings
+      cargo clippy --all-targets -- -D warnings
       echo ""
       echo "=== Checking format ==="
-      cargo fmt --all
-      cargo fmt --all --check
+      cargo fmt
+      cargo fmt --check
       echo ""
       echo "All checks passed!"
 
@@ -30,7 +30,7 @@ tasks:
     bash: |
       set -e
       set -o pipefail
-      test_output=$(cargo test --all-targets --workspace -- --list --format=terse 2>&1) || {
+      test_output=$(cargo test --all-targets -- --list --format=terse 2>&1) || {
           echo "$test_output"
           echo ""
           echo "Build or test discovery failed!"
@@ -49,7 +49,7 @@ tasks:
     help: "Run all tests"
     before: [ensure]
     bash: |
-      cargo test --workspace --all-features
+      cargo test
 
   ci:
     help: "Full CI pipeline (lint + check + test)"
@@ -179,10 +179,10 @@ tasks:
       [ "$TEST_FAILED" = "1" ] || [ "$THRESHOLD_FAILED" = "1" ] && exit 1 || true
 
   build:
-    help: "Build release binaries for all workspace members"
+    help: "Build release binary"
     bash: |
-      cargo build --release --workspace
-      echo "Release build complete for all workspace members"
+      cargo build --release
+      echo "Release build complete"
 
   clean:
     help: "Clean build artifacts"
