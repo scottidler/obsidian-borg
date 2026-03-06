@@ -13,14 +13,17 @@ use tokio::net::TcpListener;
 mod cli;
 mod config;
 mod routes;
+mod transcribe;
 
 use cli::Cli;
 use config::Config;
+use transcribe::{SharedTranscriber, create_transcriber};
 
-fn build_router() -> Router {
+fn build_router(transcriber: SharedTranscriber) -> Router {
     Router::new()
         .route("/health", get(routes::health))
         .route("/transcribe", post(routes::transcribe))
+        .with_state(transcriber)
 }
 
 async fn run_server(config: &Config) -> Result<()> {
@@ -28,7 +31,10 @@ async fn run_server(config: &Config) -> Result<()> {
         .parse()
         .context("Invalid server address")?;
 
-    let app = build_router();
+    let transcriber = create_transcriber();
+    info!("Transcriber backend: {}", transcriber.name());
+
+    let app = build_router(transcriber);
 
     println!("borg-transcriber listening on {addr}");
 
@@ -60,17 +66,21 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
+    fn test_router() -> Router {
+        build_router(create_transcriber())
+    }
+
     #[tokio::test]
     async fn test_health_endpoint() {
-        let app = build_router();
+        let app = test_router();
         let req = Request::builder().uri("/health").body(Body::empty()).expect("request");
         let resp = app.oneshot(req).await.expect("response");
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn test_transcribe_endpoint_stub() {
-        let app = build_router();
+    async fn test_transcribe_endpoint() {
+        let app = test_router();
         let body = serde_json::json!({
             "audio_bytes": [1, 2, 3],
             "language": "en",
