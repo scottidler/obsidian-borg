@@ -1,0 +1,103 @@
+use serde::{Deserialize, Serialize};
+
+/// Sent from borg-daemon to borg-transcriber
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TranscriptionRequest {
+    pub audio_bytes: Vec<u8>,
+    pub language: Option<String>,
+    pub format: AudioFormat,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum AudioFormat {
+    Mp3,
+    Wav,
+    Ogg,
+}
+
+/// Returned from borg-transcriber to borg-daemon
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TranscriptionResponse {
+    pub text: String,
+    pub language: String,
+    pub duration_secs: f64,
+}
+
+/// Sent to borg-daemon's /ingest endpoint
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IngestRequest {
+    pub url: String,
+    pub tags: Option<Vec<String>>,
+    pub priority: Option<Priority>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Priority {
+    Normal,
+    High,
+}
+
+/// Returned from /ingest
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IngestResult {
+    pub status: IngestStatus,
+    pub note_path: Option<String>,
+    pub title: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum IngestStatus {
+    Queued,
+    Completed,
+    Failed { reason: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transcription_request_roundtrip() {
+        let req = TranscriptionRequest {
+            audio_bytes: vec![1, 2, 3],
+            language: Some("en".to_string()),
+            format: AudioFormat::Mp3,
+        };
+        let json = serde_yaml::to_string(&req).expect("serialize");
+        let deserialized: TranscriptionRequest = serde_yaml::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.audio_bytes, vec![1, 2, 3]);
+        assert_eq!(deserialized.language, Some("en".to_string()));
+    }
+
+    #[test]
+    fn test_ingest_request_roundtrip() {
+        let req = IngestRequest {
+            url: "https://youtube.com/watch?v=abc".to_string(),
+            tags: Some(vec!["ai".to_string(), "rust".to_string()]),
+            priority: Some(Priority::High),
+        };
+        let json = serde_yaml::to_string(&req).expect("serialize");
+        let deserialized: IngestRequest = serde_yaml::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.url, "https://youtube.com/watch?v=abc");
+        assert_eq!(deserialized.tags, Some(vec!["ai".to_string(), "rust".to_string()]));
+    }
+
+    #[test]
+    fn test_ingest_result_with_failed_status() {
+        let result = IngestResult {
+            status: IngestStatus::Failed {
+                reason: "network error".to_string(),
+            },
+            note_path: None,
+            title: None,
+            tags: vec![],
+        };
+        let json = serde_yaml::to_string(&result).expect("serialize");
+        let deserialized: IngestResult = serde_yaml::from_str(&json).expect("deserialize");
+        match deserialized.status {
+            IngestStatus::Failed { reason } => assert_eq!(reason, "network error"),
+            _ => panic!("expected Failed status"),
+        }
+    }
+}

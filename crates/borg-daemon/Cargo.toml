@@ -1,0 +1,16 @@
+[package]
+name = "borg-daemon"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[dependencies]
+borg-core = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+dirs = { workspace = true }
+env_logger = { workspace = true }
+eyre = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }

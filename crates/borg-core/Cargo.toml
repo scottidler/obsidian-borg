@@ -1,0 +1,13 @@
+[package]
+name = "borg-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dirs = { workspace = true }
+env_logger = { workspace = true }
+eyre = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
