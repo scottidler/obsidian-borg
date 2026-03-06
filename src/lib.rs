@@ -4,6 +4,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod discord;
 pub mod error;
 pub mod health;
 pub mod jina;
@@ -11,6 +12,7 @@ pub mod logging;
 pub mod markdown;
 pub mod pipeline;
 pub mod routes;
+pub mod telegram;
 pub mod transcription_client;
 pub mod types;
 pub mod url_router;
@@ -39,17 +41,36 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
         .context("Invalid server address")?;
 
     let config = Arc::new(config);
-    let app = build_router(config);
+    let mut tasks = tokio::task::JoinSet::new();
 
-    println!(
-        "{} obsidian-borg listening on {}",
-        "-->".green(),
-        addr.to_string().cyan()
-    );
-
+    // HTTP server (always runs)
+    let app = build_router(config.clone());
     let listener = TcpListener::bind(addr).await.context("Failed to bind to address")?;
+    tasks.spawn(async move { axum::serve(listener, app).await.map_err(|e| eyre::eyre!(e)) });
+    println!("{} http server on {}", "-->".green(), addr.to_string().cyan());
 
-    axum::serve(listener, app).await.context("Server error")?;
+    // Telegram bot (config-driven)
+    if let Some(tg_config) = &config.telegram {
+        let token = std::env::var(&tg_config.bot_token_env).context("Telegram bot token env var not set")?;
+        let tg = tg_config.clone();
+        let cfg = config.clone();
+        tasks.spawn(async move { telegram::run(token, tg, cfg).await });
+        println!("{} telegram bot active", "-->".green());
+    }
+
+    // Discord bot (config-driven)
+    if let Some(dc_config) = &config.discord {
+        let token = std::env::var(&dc_config.bot_token_env).context("Discord bot token env var not set")?;
+        let dc = dc_config.clone();
+        let cfg = config.clone();
+        tasks.spawn(async move { discord::run(token, dc, cfg).await });
+        println!("{} discord bot active", "-->".green());
+    }
+
+    // If any task exits (error or completion), propagate
+    if let Some(result) = tasks.join_next().await {
+        result??;
+    }
 
     Ok(())
 }

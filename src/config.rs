@@ -57,7 +57,22 @@ pub struct Config {
     pub transcriber: TranscriberConfig,
     pub groq: GroqConfig,
     pub llm: LlmConfig,
+    pub telegram: Option<TelegramConfig>,
+    pub discord: Option<DiscordConfig>,
     pub debug: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TelegramConfig {
+    pub bot_token_env: String,
+    #[serde(default)]
+    pub allowed_chat_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DiscordConfig {
+    pub bot_token_env: String,
+    pub channel_id: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -194,5 +209,68 @@ debug: true
         assert_eq!(config.groq.model, "whisper-large-v3-turbo");
         assert_eq!(config.llm.provider, "ollama");
         assert!(config.debug);
+    }
+
+    #[test]
+    fn test_config_without_bot_sections() {
+        let yaml = r#"
+server:
+  host: "0.0.0.0"
+  port: 8080
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        assert!(config.telegram.is_none());
+        assert!(config.discord.is_none());
+    }
+
+    #[test]
+    fn test_config_with_telegram_section() {
+        let yaml = r#"
+telegram:
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  allowed_chat_ids: [123456, 789012]
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let tg = config.telegram.expect("telegram should be Some");
+        assert_eq!(tg.bot_token_env, "TELEGRAM_BOT_TOKEN");
+        assert_eq!(tg.allowed_chat_ids, vec![123456, 789012]);
+    }
+
+    #[test]
+    fn test_config_with_telegram_no_allowed_ids() {
+        let yaml = r#"
+telegram:
+  bot_token_env: "TELEGRAM_BOT_TOKEN"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let tg = config.telegram.expect("telegram should be Some");
+        assert!(tg.allowed_chat_ids.is_empty());
+    }
+
+    #[test]
+    fn test_config_with_discord_section() {
+        let yaml = r#"
+discord:
+  bot_token_env: "DISCORD_BOT_TOKEN"
+  channel_id: 1234567890
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let dc = config.discord.expect("discord should be Some");
+        assert_eq!(dc.bot_token_env, "DISCORD_BOT_TOKEN");
+        assert_eq!(dc.channel_id, 1234567890);
+    }
+
+    #[test]
+    fn test_config_with_both_bots() {
+        let yaml = r#"
+telegram:
+  bot_token_env: "TG_TOKEN"
+discord:
+  bot_token_env: "DC_TOKEN"
+  channel_id: 999
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        assert!(config.telegram.is_some());
+        assert!(config.discord.is_some());
     }
 }
