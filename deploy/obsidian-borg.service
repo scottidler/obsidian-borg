@@ -12,6 +12,9 @@ RestartSec=5
 Environment=RUST_LOG=info
 Environment=ANTHROPIC_API_KEY=
 Environment=GROQ_API_KEY=
+# Uncomment if using Telegram/Discord bots:
+# Environment=TELEGRAM_BOT_TOKEN=
+# Environment=DISCORD_BOT_TOKEN=
 WorkingDirectory=/home/saidler
 
 [Install]
