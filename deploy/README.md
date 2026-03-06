@@ -25,7 +25,7 @@ cargo install --path .
 
 ### Configure
 
-Create `~/.config/obsidian-borg/obsidian-borg.yml` (see `deploy/obsidian-borg.example.yml`):
+Create `~/.config/obsidian-borg/obsidian-borg.yml` (see `obsidian-borg.example.yml` at repo root):
 
 ```bash
 mkdir -p ~/.config/obsidian-borg
