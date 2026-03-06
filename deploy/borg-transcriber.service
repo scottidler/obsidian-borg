@@ -1,0 +1,16 @@
+[Unit]
+Description=Borg Transcriber - Whisper transcription microservice
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saidler
+ExecStart=/home/saidler/.cargo/bin/borg-transcriber
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+WorkingDirectory=/home/saidler
+
+[Install]
+WantedBy=multi-user.target

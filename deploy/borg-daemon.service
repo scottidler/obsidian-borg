@@ -1,0 +1,18 @@
+[Unit]
+Description=Borg Daemon - Obsidian ingestion service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saidler
+ExecStart=/home/saidler/.cargo/bin/borg-daemon
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+Environment=ANTHROPIC_API_KEY=
+Environment=GROQ_API_KEY=
+WorkingDirectory=/home/saidler
+
+[Install]
+WantedBy=multi-user.target
