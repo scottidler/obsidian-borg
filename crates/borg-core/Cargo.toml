@@ -4,10 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+axum = "0.8.8"
 dirs = { workspace = true }
 env_logger = { workspace = true }
 eyre = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+serde_json = "1.0.149"
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
