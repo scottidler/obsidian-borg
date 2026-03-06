@@ -1,15 +1,17 @@
 [Unit]
-Description=Borg Transcriber - Whisper transcription microservice
+Description=obsidian-borg - Obsidian ingestion daemon
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=saidler
-ExecStart=/home/saidler/.cargo/bin/borg-transcriber
+ExecStart=/home/saidler/.cargo/bin/obsidian-borg
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
+Environment=ANTHROPIC_API_KEY=
+Environment=GROQ_API_KEY=
 WorkingDirectory=/home/saidler
 
 [Install]

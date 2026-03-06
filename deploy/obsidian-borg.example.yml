@@ -1,0 +1,19 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+vault:
+  inbox_path: "~/obsidian-vault/Inbox"
+
+transcriber:
+  url: "http://100.x.x.x:8090"  # Tailscale IP of youtube-siphon machine
+  timeout_secs: 120
+
+groq:
+  api_key_env: "GROQ_API_KEY"
+  model: "whisper-large-v3"
+
+llm:
+  provider: "claude"
+  model: "claude-sonnet-4-6"
+  api_key_env: "ANTHROPIC_API_KEY"

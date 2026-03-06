@@ -3,9 +3,9 @@
 ## Architecture
 
 ```
-Phone/Desktop --HTTP POST--> borg-daemon (Ubuntu desktop)
-borg-daemon --HTTP POST--> borg-transcriber (WSL2/4090, when needed)
-            --HTTP POST--> Groq API (when transcriber unreachable)
+Phone/Desktop --HTTP POST--> obsidian-borg (Ubuntu desktop)
+obsidian-borg --HTTP POST--> youtube-siphon (WSL2/4090, when needed)
+            --HTTP POST--> Groq API (when youtube-siphon unreachable)
 ```
 
 Both machines must be on the same Tailscale network.
@@ -14,87 +14,33 @@ Both machines must be on the same Tailscale network.
 
 - [Tailscale](https://tailscale.com/) installed on both machines
 - `yt-dlp` installed on the Ubuntu desktop: `sudo apt install yt-dlp`
-- Whisper model files on the WSL2 machine (for borg-transcriber with whisper-rs feature)
 
-## Ubuntu Desktop (borg-daemon)
+## Ubuntu Desktop (obsidian-borg)
 
 ### Build and install
 
 ```bash
-cargo install --path crates/borg-daemon
+cargo install --path .
 ```
 
 ### Configure
 
-Create `~/.config/borg-daemon/borg-daemon.yml`:
+Create `~/.config/obsidian-borg/obsidian-borg.yml` (see `deploy/obsidian-borg.example.yml`):
 
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-
-vault:
-  inbox_path: "~/obsidian-vault/Inbox"
-
-transcriber:
-  url: "http://100.x.x.x:8090"  # Tailscale IP of WSL2 machine
-  timeout_secs: 120
-
-groq:
-  api_key_env: "GROQ_API_KEY"
-  model: "whisper-large-v3"
-
-llm:
-  provider: "claude"
-  model: "claude-sonnet-4-6"
-  api_key_env: "ANTHROPIC_API_KEY"
+```bash
+mkdir -p ~/.config/obsidian-borg
+cp deploy/obsidian-borg.example.yml ~/.config/obsidian-borg/obsidian-borg.yml
+# Edit to set your Tailscale IPs, vault path, etc.
 ```
 
 ### Install systemd service
 
 ```bash
-sudo cp deploy/borg-daemon.service /etc/systemd/system/
+sudo cp deploy/obsidian-borg.service /etc/systemd/system/
 # Edit the service file to set API keys
 sudo systemctl daemon-reload
-sudo systemctl enable --now borg-daemon
-sudo systemctl status borg-daemon
-```
-
-## WSL2 Machine (borg-transcriber)
-
-### Build and install
-
-```bash
-# With Whisper/CUDA support:
-cargo install --path crates/borg-transcriber --features whisper-rs,cuda
-
-# Without Whisper (stub mode for testing):
-cargo install --path crates/borg-transcriber
-```
-
-### Configure
-
-Create `~/.config/borg-transcriber/borg-transcriber.yml`:
-
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8090
-
-whisper:
-  model: "large-v3"
-  model_path: "~/.local/share/whisper/models"
-  device: "cuda"
-  compute_type: "float16"
-```
-
-### Install systemd service
-
-```bash
-sudo cp deploy/borg-transcriber.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now borg-transcriber
-sudo systemctl status borg-transcriber
+sudo systemctl enable --now obsidian-borg
+sudo systemctl status obsidian-borg
 ```
 
 ## Android (HTTP Shortcuts)
@@ -110,7 +56,7 @@ Create a shortcut:
   {"url": "{url}", "tags": ["shared"]}
   ```
 
-Set this as a Share target so you can share URLs from any app directly to borg-daemon.
+Set this as a Share target so you can share URLs from any app directly to obsidian-borg.
 
 ## Ubuntu Desktop Hotkey
 
