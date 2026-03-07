@@ -114,8 +114,8 @@ pub async fn fetch_article(url: &str, config: &FabricConfig) -> Result<String> {
     }
 
     // Fallback: markitdown
-    log::debug!("fabric -u failed, trying markitdown for {url}");
-    let output = Command::new("markitdown")
+    log::debug!("fabric -u failed, trying markitdown-cli for {url}");
+    let output = Command::new("markitdown-cli")
         .arg(url)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -132,7 +132,7 @@ pub async fn fetch_article(url: &str, config: &FabricConfig) -> Result<String> {
     }
 
     // Last resort: jina.rs (caller handles this)
-    bail!("Both fabric -u and markitdown failed for {url}")
+    bail!("Both fabric -u and markitdown-cli failed for {url}")
 }
 
 pub async fn summarize(content: &str, is_youtube: bool, config: &FabricConfig) -> Result<String> {
