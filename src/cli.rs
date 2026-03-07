@@ -31,8 +31,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Run the ingestion daemon (default)
-    Serve,
+    /// Manage the daemon (install, start, stop, status, etc.)
+    Daemon(DaemonOpts),
     /// Send a URL to the running daemon for ingestion
     Ingest {
         /// URL to ingest
@@ -41,14 +41,37 @@ pub enum Command {
         #[arg(short, long, value_delimiter = ',')]
         tags: Option<Vec<String>>,
     },
-    /// Install as a system service (systemd on Linux, launchd on macOS)
-    Install {
-        /// Overwrite existing service file
-        #[arg(long)]
-        force: bool,
-    },
-    /// Remove the system service
-    Uninstall,
+}
+
+#[derive(Parser, Debug)]
+pub struct DaemonOpts {
+    /// Install system service
+    #[arg(long)]
+    pub install: bool,
+
+    /// Uninstall system service
+    #[arg(long)]
+    pub uninstall: bool,
+
+    /// Reinstall system service (uninstall then install)
+    #[arg(long)]
+    pub reinstall: bool,
+
+    /// Start daemon
+    #[arg(long)]
+    pub start: bool,
+
+    /// Stop daemon
+    #[arg(long)]
+    pub stop: bool,
+
+    /// Restart daemon
+    #[arg(long)]
+    pub restart: bool,
+
+    /// Show daemon status
+    #[arg(long)]
+    pub status: bool,
 }
 
 fn get_tool_validation_help() -> String {
@@ -201,9 +224,39 @@ mod tests {
     }
 
     #[test]
-    fn test_serve_subcommand() {
-        let cli = Cli::try_parse_from(["obsidian-borg", "serve"]).expect("parse");
-        assert!(matches!(cli.command, Some(Command::Serve)));
+    fn test_daemon_install() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "daemon", "--install"]).expect("parse");
+        match cli.command {
+            Some(Command::Daemon(opts)) => assert!(opts.install),
+            _ => panic!("expected Daemon"),
+        }
+    }
+
+    #[test]
+    fn test_daemon_start() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "daemon", "--start"]).expect("parse");
+        match cli.command {
+            Some(Command::Daemon(opts)) => assert!(opts.start),
+            _ => panic!("expected Daemon"),
+        }
+    }
+
+    #[test]
+    fn test_daemon_status() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "daemon", "--status"]).expect("parse");
+        match cli.command {
+            Some(Command::Daemon(opts)) => assert!(opts.status),
+            _ => panic!("expected Daemon"),
+        }
+    }
+
+    #[test]
+    fn test_daemon_reinstall() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "daemon", "--reinstall"]).expect("parse");
+        match cli.command {
+            Some(Command::Daemon(opts)) => assert!(opts.reinstall),
+            _ => panic!("expected Daemon"),
+        }
     }
 
     #[test]
@@ -232,34 +285,13 @@ mod tests {
     }
 
     #[test]
-    fn test_install_subcommand() {
-        let cli = Cli::try_parse_from(["obsidian-borg", "install"]).expect("parse");
-        match cli.command {
-            Some(Command::Install { force }) => assert!(!force),
-            _ => panic!("expected Install"),
-        }
-    }
-
-    #[test]
-    fn test_install_with_force() {
-        let cli = Cli::try_parse_from(["obsidian-borg", "install", "--force"]).expect("parse");
-        match cli.command {
-            Some(Command::Install { force }) => assert!(force),
-            _ => panic!("expected Install"),
-        }
-    }
-
-    #[test]
-    fn test_uninstall_subcommand() {
-        let cli = Cli::try_parse_from(["obsidian-borg", "uninstall"]).expect("parse");
-        assert!(matches!(cli.command, Some(Command::Uninstall)));
-    }
-
-    #[test]
     fn test_global_options_with_subcommand() {
-        let cli = Cli::try_parse_from(["obsidian-borg", "-v", "-l", "debug", "serve"]).expect("parse");
+        let cli = Cli::try_parse_from(["obsidian-borg", "-v", "-l", "debug", "daemon", "--start"]).expect("parse");
         assert!(cli.verbose);
         assert_eq!(cli.log_level, Some("debug".to_string()));
-        assert!(matches!(cli.command, Some(Command::Serve)));
+        match cli.command {
+            Some(Command::Daemon(opts)) => assert!(opts.start),
+            _ => panic!("expected Daemon"),
+        }
     }
 }

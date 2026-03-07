@@ -22,9 +22,11 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        None | Some(Command::Serve) => obsidian_borg::run_server(config, cli.verbose).await,
+        None => {
+            Cli::parse_from(["obsidian-borg", "--help"]);
+            Ok(())
+        }
+        Some(Command::Daemon(opts)) => obsidian_borg::run_daemon(config, cli.verbose, opts).await,
         Some(Command::Ingest { url, tags }) => obsidian_borg::run_ingest(config, url, tags).await,
-        Some(Command::Install { force }) => obsidian_borg::install_service(force).await,
-        Some(Command::Uninstall) => obsidian_borg::uninstall_service().await,
     }
 }

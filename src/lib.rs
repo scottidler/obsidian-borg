@@ -135,7 +135,31 @@ pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>) 
     Ok(())
 }
 
-pub async fn install_service(force: bool) -> Result<()> {
+pub async fn run_daemon(config: Config, verbose: bool, opts: cli::DaemonOpts) -> Result<()> {
+    use cli::DaemonOpts;
+
+    match opts {
+        DaemonOpts { install: true, .. } => install_service(false).await,
+        DaemonOpts { uninstall: true, .. } => uninstall_service().await,
+        DaemonOpts { reinstall: true, .. } => {
+            uninstall_service().await.ok();
+            install_service(false).await
+        }
+        DaemonOpts { start: true, .. } => run_server(config, verbose).await,
+        DaemonOpts { stop: true, .. } => stop_service().await,
+        DaemonOpts { restart: true, .. } => {
+            stop_service().await.ok();
+            run_server(config, verbose).await
+        }
+        DaemonOpts { status: true, .. } => show_status().await,
+        _ => {
+            eprintln!("No daemon action specified. See: obsidian-borg daemon --help");
+            Ok(())
+        }
+    }
+}
+
+async fn install_service(force: bool) -> Result<()> {
     let exe_path = std::env::current_exe().context("Failed to detect binary path")?;
     let exe = exe_path.display();
 
@@ -148,7 +172,7 @@ pub async fn install_service(force: bool) -> Result<()> {
     }
 }
 
-pub async fn uninstall_service() -> Result<()> {
+async fn uninstall_service() -> Result<()> {
     if cfg!(target_os = "linux") {
         uninstall_systemd().await
     } else if cfg!(target_os = "macos") {
@@ -156,6 +180,64 @@ pub async fn uninstall_service() -> Result<()> {
     } else {
         eyre::bail!("Unsupported platform for service uninstall")
     }
+}
+
+async fn stop_service() -> Result<()> {
+    use tokio::process::Command;
+
+    if cfg!(target_os = "linux") {
+        let output = Command::new("systemctl")
+            .args(["--user", "stop", "obsidian-borg"])
+            .output()
+            .await
+            .context("Failed to run systemctl")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("Failed to stop service: {stderr}");
+        }
+        println!("Stopped obsidian-borg service");
+    } else if cfg!(target_os = "macos") {
+        let output = Command::new("launchctl")
+            .args(["stop", "com.obsidian-borg"])
+            .output()
+            .await
+            .context("Failed to run launchctl")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("Failed to stop service: {stderr}");
+        }
+        println!("Stopped obsidian-borg service");
+    } else {
+        eyre::bail!("Unsupported platform for service stop")
+    }
+
+    Ok(())
+}
+
+async fn show_status() -> Result<()> {
+    use tokio::process::Command;
+
+    if cfg!(target_os = "linux") {
+        let output = Command::new("systemctl")
+            .args(["--user", "status", "obsidian-borg"])
+            .output()
+            .await
+            .context("Failed to run systemctl")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("{stdout}");
+    } else if cfg!(target_os = "macos") {
+        let output = Command::new("launchctl")
+            .args(["list", "com.obsidian-borg"])
+            .output()
+            .await
+            .context("Failed to run launchctl")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("{stdout}");
+    } else {
+        eyre::bail!("Unsupported platform for service status")
+    }
+
+    Ok(())
 }
 
 async fn install_systemd(exe_path: &str, force: bool) -> Result<()> {
