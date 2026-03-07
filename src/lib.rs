@@ -27,13 +27,20 @@ use eyre::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tower_http::cors::{Any, CorsLayer};
 
 use config::Config;
 
 pub fn build_router(config: Arc<Config>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([axum::http::header::CONTENT_TYPE]);
+
     Router::new()
         .route("/health", get(routes::health))
         .route("/ingest", post(routes::ingest))
+        .layer(cors)
         .with_state(config)
 }
 
