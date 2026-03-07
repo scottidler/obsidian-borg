@@ -24,8 +24,9 @@ pub struct ClassificationResult {
 
 pub async fn run_pattern(pattern: &str, input: &str, config: &FabricConfig) -> Result<String> {
     let truncated = truncate_input(input, config.max_content_chars);
+    let binary = resolve_binary(config);
 
-    let mut cmd = Command::new(&config.binary);
+    let mut cmd = Command::new(&binary);
     cmd.args(["-p", pattern]);
     if !config.model.is_empty() {
         cmd.args(["-m", &config.model]);
@@ -55,8 +56,9 @@ pub async fn run_pattern(pattern: &str, input: &str, config: &FabricConfig) -> R
 
 pub async fn fetch_youtube(url: &str, config: &FabricConfig) -> Result<YouTubeContent> {
     // Get metadata via fabric -y <url> --metadata
+    let binary = resolve_binary(config);
     log::debug!("fabric: fetching YouTube metadata for {url}");
-    let mut cmd = Command::new(&config.binary);
+    let mut cmd = Command::new(&binary);
     cmd.args(["-y", url, "--metadata"]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -73,7 +75,7 @@ pub async fn fetch_youtube(url: &str, config: &FabricConfig) -> Result<YouTubeCo
 
     // Get transcript via fabric -y <url> --transcript
     log::debug!("fabric: fetching YouTube transcript for {url}");
-    let mut cmd = Command::new(&config.binary);
+    let mut cmd = Command::new(&binary);
     cmd.args(["-y", url, "--transcript"]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -99,8 +101,9 @@ pub async fn fetch_youtube(url: &str, config: &FabricConfig) -> Result<YouTubeCo
 
 pub async fn fetch_article(url: &str, config: &FabricConfig) -> Result<String> {
     // Primary: fabric -u <url>
+    let binary = resolve_binary(config);
     log::debug!("fabric: fetching article for {url}");
-    let mut cmd = Command::new(&config.binary);
+    let mut cmd = Command::new(&binary);
     cmd.args(["-u", url]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -216,8 +219,33 @@ fn truncate_input(input: &str, max_chars: usize) -> String {
     }
 }
 
+/// Resolve the fabric binary path — if not absolute, try `which` to find it.
+pub fn resolve_binary(config: &FabricConfig) -> String {
+    let binary = &config.binary;
+    if binary.starts_with('/') || binary.starts_with("./") {
+        return binary.clone();
+    }
+    // Try `which` to resolve from shell PATH (covers ~/go/bin etc.)
+    if let Ok(output) = Command::new("which")
+        .arg(binary)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !resolved.is_empty() {
+                log::debug!("Resolved fabric binary: {binary} -> {resolved}");
+                return resolved;
+            }
+        }
+    }
+    binary.clone()
+}
+
 pub fn is_available(config: &FabricConfig) -> bool {
-    Command::new(&config.binary)
+    let binary = resolve_binary(config);
+    Command::new(&binary)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
