@@ -146,6 +146,7 @@ pub async fn run_ingest(
     tags: Option<Vec<String>>,
     force: bool,
     notify: bool,
+    method: types::IngestMethod,
 ) -> Result<()> {
     let host = &config.hotkey.host;
     let port = config.hotkey.port;
@@ -159,6 +160,7 @@ pub async fn run_ingest(
         "url": url,
         "tags": tags.unwrap_or_default(),
         "force": force,
+        "method": method,
     });
 
     let client = reqwest::Client::new();
@@ -704,7 +706,7 @@ mod tests {
             },
             ..Config::default()
         };
-        let result = run_ingest(config, "https://example.com".to_string(), None, false, false).await;
+        let result = run_ingest(config, "https://example.com".to_string(), None, false, false, types::IngestMethod::Cli).await;
         assert!(result.is_err());
         let err = format!("{}", result.expect_err("expected error"));
         assert!(

@@ -51,6 +51,8 @@ pub struct IngestRequest {
     pub priority: Option<Priority>,
     #[serde(default)]
     pub force: bool,
+    #[serde(default)]
+    pub method: Option<IngestMethod>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -112,6 +114,7 @@ mod tests {
             tags: Some(vec!["ai".to_string(), "rust".to_string()]),
             priority: Some(Priority::High),
             force: false,
+            method: Some(IngestMethod::Clipboard),
         };
         let json = serde_yaml::to_string(&req).expect("serialize");
         let deserialized: IngestRequest = serde_yaml::from_str(&json).expect("deserialize");

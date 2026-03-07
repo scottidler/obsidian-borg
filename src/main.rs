@@ -34,7 +34,12 @@ async fn main() -> Result<()> {
             force,
         }) => {
             let resolved_url = obsidian_borg::resolve_ingest_url(url, clipboard)?;
-            obsidian_borg::run_ingest(config, resolved_url, tags, force, clipboard).await
+            let method = if clipboard {
+                obsidian_borg::types::IngestMethod::Clipboard
+            } else {
+                obsidian_borg::types::IngestMethod::Cli
+            };
+            obsidian_borg::run_ingest(config, resolved_url, tags, force, clipboard, method).await
         }
         Some(Command::Hotkey(opts)) => obsidian_borg::run_hotkey(opts, &config).await,
         Some(Command::Migrate { dry_run: _, apply }) => obsidian_borg::migrate::run_migrate(&config, apply).await,

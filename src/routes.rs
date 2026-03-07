@@ -16,7 +16,8 @@ pub async fn ingest(State(config): State<Arc<Config>>, Json(request): Json<Inges
 
     let tags = request.tags.unwrap_or_default();
 
-    let result = pipeline::process_url(&request.url, tags, IngestMethod::Http, request.force, &config).await;
+    let method = request.method.unwrap_or(IngestMethod::Http);
+    let result = pipeline::process_url(&request.url, tags, method, request.force, &config).await;
 
     match &result.status {
         IngestStatus::Failed { reason } => {
