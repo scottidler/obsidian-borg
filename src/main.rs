@@ -1,11 +1,12 @@
 use clap::Parser;
 use eyre::{Context, Result};
+use obsidian_borg::cli::{Cli, Command};
 use obsidian_borg::config::Config;
 use obsidian_borg::logging;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = obsidian_borg::cli::Cli::parse();
+    let cli = Cli::parse();
     let config: Config =
         obsidian_borg::config::load_config(cli.config.as_ref()).context("Failed to load configuration")?;
 
@@ -20,5 +21,10 @@ async fn main() -> Result<()> {
         println!("{}", colored::Colorize::yellow("Verbose mode enabled"));
     }
 
-    obsidian_borg::run_server(config, cli.verbose).await
+    match cli.command {
+        None | Some(Command::Serve) => obsidian_borg::run_server(config, cli.verbose).await,
+        Some(Command::Ingest { url, tags }) => obsidian_borg::run_ingest(config, url, tags).await,
+        Some(Command::Install { force }) => obsidian_borg::install_service(force).await,
+        Some(Command::Uninstall) => obsidian_borg::uninstall_service().await,
+    }
 }

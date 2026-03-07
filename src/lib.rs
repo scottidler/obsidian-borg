@@ -89,6 +89,53 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     Ok(())
 }
 
+pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>) -> Result<()> {
+    let host = &config.server.host;
+    let port = config.server.port;
+    let endpoint = format!("http://{host}:{port}/ingest");
+
+    let body = serde_json::json!({
+        "url": url,
+        "tags": tags.unwrap_or_default(),
+    });
+
+    let client = reqwest::Client::new();
+    let response = client.post(&endpoint).json(&body).send().await.map_err(|e| {
+        if e.is_connect() {
+            eyre::eyre!("cannot reach obsidian-borg at http://{host}:{port} — is the daemon running?")
+        } else {
+            eyre::eyre!("{e}")
+        }
+    })?;
+
+    let result: types::IngestResult = response.json().await.context("Failed to parse response from daemon")?;
+
+    match &result.status {
+        types::IngestStatus::Completed => {
+            let title = result.title.as_deref().unwrap_or("Untitled");
+            let path = result.note_path.as_deref().unwrap_or("unknown");
+            println!("Captured: \"{title}\" -> {path}");
+        }
+        types::IngestStatus::Failed { reason } => {
+            eprintln!("Error: {reason}");
+            std::process::exit(1);
+        }
+        types::IngestStatus::Queued => {
+            println!("Queued for processing.");
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn install_service(_force: bool) -> Result<()> {
+    eyre::bail!("install subcommand not yet implemented (Phase 3)")
+}
+
+pub async fn uninstall_service() -> Result<()> {
+    eyre::bail!("uninstall subcommand not yet implemented (Phase 3)")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
