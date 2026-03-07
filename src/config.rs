@@ -59,7 +59,49 @@ pub struct Config {
     pub llm: LlmConfig,
     pub telegram: Option<TelegramConfig>,
     pub discord: Option<DiscordConfig>,
+    #[serde(default = "default_links")]
+    pub links: Vec<LinkConfig>,
+    pub log_level: Option<String>,
     pub debug: bool,
+}
+
+fn default_links() -> Vec<LinkConfig> {
+    vec![
+        LinkConfig {
+            name: "shorts".to_string(),
+            regex: r"https?://(?:www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]+)".to_string(),
+            resolution: "480p".to_string(),
+            folder: "".to_string(),
+        },
+        LinkConfig {
+            name: "youtube".to_string(),
+            regex:
+                r"https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/|music\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]+)"
+                    .to_string(),
+            resolution: "FWVGA".to_string(),
+            folder: "".to_string(),
+        },
+        LinkConfig {
+            name: "default".to_string(),
+            regex: r".*".to_string(),
+            resolution: "FWVGA".to_string(),
+            folder: "".to_string(),
+        },
+    ]
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkConfig {
+    pub name: String,
+    pub regex: String,
+    #[serde(default = "default_resolution")]
+    pub resolution: String,
+    #[serde(default)]
+    pub folder: String,
+}
+
+fn default_resolution() -> String {
+    "FWVGA".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

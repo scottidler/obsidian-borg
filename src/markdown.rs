@@ -57,16 +57,7 @@ fn escape_yaml_string(s: &str) -> String {
 }
 
 pub fn sanitize_filename(title: &str) -> String {
-    title
-        .chars()
-        .map(
-            |c| {
-                if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' }
-            },
-        )
-        .collect::<String>()
-        .trim()
-        .to_string()
+    crate::url_hygiene::sanitize_filename(title)
 }
 
 #[cfg(test)]
@@ -110,8 +101,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("Hello World!"), "Hello World_");
-        assert_eq!(sanitize_filename("Test: A/B \"quotes\""), "Test_ A_B _quotes_");
+        assert_eq!(sanitize_filename("Hello World!"), "Hello World");
+        assert_eq!(sanitize_filename("Test: A/B \"quotes\""), "Test A B quotes");
         assert_eq!(sanitize_filename("normal-file_name"), "normal-file_name");
     }
 

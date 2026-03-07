@@ -15,6 +15,7 @@ pub mod routes;
 pub mod telegram;
 pub mod transcription_client;
 pub mod types;
+pub mod url_hygiene;
 pub mod url_router;
 pub mod youtube;
 
@@ -40,6 +41,16 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
         .parse()
         .context("Invalid server address")?;
 
+    log::info!("Server address: {addr}");
+    log::debug!("Vault inbox: {}", config.vault.inbox_path);
+    log::debug!("Transcriber URL: {}", config.transcriber.url);
+    log::debug!(
+        "Groq model: {}, key env: {}",
+        config.groq.model,
+        config.groq.api_key_env
+    );
+    log::debug!("LLM provider: {}, model: {}", config.llm.provider, config.llm.model);
+
     let config = Arc::new(config);
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -47,11 +58,16 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     let app = build_router(config.clone());
     let listener = TcpListener::bind(addr).await.context("Failed to bind to address")?;
     tasks.spawn(async move { axum::serve(listener, app).await.map_err(|e| eyre::eyre!(e)) });
+    log::info!("HTTP server listening on {addr}");
     println!("{} http server on {}", "-->".green(), addr.to_string().cyan());
 
     // Telegram bot (config-driven)
     if let Some(tg_config) = &config.telegram {
         let token = std::env::var(&tg_config.bot_token_env).context("Telegram bot token env var not set")?;
+        log::info!(
+            "Telegram bot enabled (allowed_chat_ids: {:?})",
+            tg_config.allowed_chat_ids
+        );
         let tg = tg_config.clone();
         let cfg = config.clone();
         tasks.spawn(async move { telegram::run(token, tg, cfg).await });
@@ -61,6 +77,7 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     // Discord bot (config-driven)
     if let Some(dc_config) = &config.discord {
         let token = std::env::var(&dc_config.bot_token_env).context("Discord bot token env var not set")?;
+        log::info!("Discord bot enabled (channel_id: {})", dc_config.channel_id);
         let dc = dc_config.clone();
         let cfg = config.clone();
         tasks.spawn(async move { discord::run(token, dc, cfg).await });

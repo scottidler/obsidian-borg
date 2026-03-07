@@ -34,19 +34,26 @@ pub enum Priority {
     High,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct IngestResult {
     pub status: IngestStatus,
     pub note_path: Option<String>,
     pub title: Option<String>,
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_secs: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub enum IngestStatus {
+    #[default]
     Queued,
     Completed,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 #[cfg(test)]
@@ -88,6 +95,7 @@ mod tests {
             note_path: None,
             title: None,
             tags: vec![],
+            ..Default::default()
         };
         let json = serde_yaml::to_string(&result).expect("serialize");
         let deserialized: IngestResult = serde_yaml::from_str(&json).expect("deserialize");
