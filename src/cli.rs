@@ -103,10 +103,9 @@ pub struct DaemonOpts {
 }
 
 fn get_tool_validation_help() -> String {
+    #[allow(clippy::type_complexity)]
     let tools: &[(&str, &str, &str, &[(&str, &str, &str)])] = &[
-        ("yt-dlp", "--version", "2023.0.0", &[
-            ("ffmpeg", "-version", ""),
-        ]),
+        ("yt-dlp", "--version", "2023.0.0", &[("ffmpeg", "-version", "")]),
         ("fabric", "--version", "1.0.0", &[]),
         ("markitdown-cli", "-h", "", &[]),
     ];
@@ -219,11 +218,7 @@ fn extract_version(output: &str) -> String {
 }
 
 fn version_compare(version: &str, min_version: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split('.')
-            .map(|part| part.parse().unwrap_or(0))
-            .collect()
-    };
+    let parse = |v: &str| -> Vec<u32> { v.split('.').map(|part| part.parse().unwrap_or(0)).collect() };
 
     let v1 = parse(version);
     let v2 = parse(min_version);
@@ -339,9 +334,16 @@ mod tests {
 
     #[test]
     fn test_hotkey_custom_host_and_port() {
-        let cli =
-            Cli::try_parse_from(["obsidian-borg", "hotkey", "--install", "--host", "desk.lan", "--port", "9090"])
-                .expect("parse");
+        let cli = Cli::try_parse_from([
+            "obsidian-borg",
+            "hotkey",
+            "--install",
+            "--host",
+            "desk.lan",
+            "--port",
+            "9090",
+        ])
+        .expect("parse");
         match cli.command {
             Some(Command::Hotkey(opts)) => {
                 assert!(opts.install);
@@ -354,8 +356,7 @@ mod tests {
 
     #[test]
     fn test_hotkey_custom_key() {
-        let cli =
-            Cli::try_parse_from(["obsidian-borg", "hotkey", "--install", "--key", "<Super>b"]).expect("parse");
+        let cli = Cli::try_parse_from(["obsidian-borg", "hotkey", "--install", "--key", "<Super>b"]).expect("parse");
         match cli.command {
             Some(Command::Hotkey(opts)) => {
                 assert_eq!(opts.key, "<Super>b");

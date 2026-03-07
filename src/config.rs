@@ -34,7 +34,11 @@ pub fn load_config<T: DeserializeOwned + Default>(config_path: Option<&PathBuf>)
             match load_from_file(&primary_config) {
                 Ok(config) => return Ok(config),
                 Err(e) => {
-                    eprintln!("Warning: Failed to load config from {}: {}", primary_config.display(), e);
+                    eprintln!(
+                        "Warning: Failed to load config from {}: {}",
+                        primary_config.display(),
+                        e
+                    );
                 }
             }
         }
@@ -45,7 +49,11 @@ pub fn load_config<T: DeserializeOwned + Default>(config_path: Option<&PathBuf>)
         match load_from_file(&fallback_config) {
             Ok(config) => return Ok(config),
             Err(e) => {
-                eprintln!("Warning: Failed to load config from {}: {}", fallback_config.display(), e);
+                eprintln!(
+                    "Warning: Failed to load config from {}: {}",
+                    fallback_config.display(),
+                    e
+                );
             }
         }
     }
@@ -59,6 +67,96 @@ fn load_from_file<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
     let config: T = serde_yaml::from_str(&content).context("Failed to parse config file")?;
     log::info!("Loaded config from: {}", path.as_ref().display());
     Ok(config)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CanonicalRule {
+    pub name: String,
+    #[serde(rename = "match")]
+    pub match_regex: String,
+    pub canonical: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CanonicalConfig {
+    pub rules: Vec<CanonicalRule>,
+}
+
+impl Default for CanonicalConfig {
+    fn default() -> Self {
+        Self {
+            rules: default_canonicalization_rules(),
+        }
+    }
+}
+
+pub fn default_canonicalization_rules() -> Vec<CanonicalRule> {
+    vec![
+        // YouTube Shorts — normalize domain only, keep /shorts/ path
+        CanonicalRule {
+            name: "youtube-shorts-mobile".to_string(),
+            match_regex: r"https?://m\.youtube\.com/shorts/(?P<id>[a-zA-Z0-9_-]+)".to_string(),
+            canonical: "https://www.youtube.com/shorts/{id}".to_string(),
+        },
+        // YouTube watch — normalize all domain variants to www.youtube.com
+        CanonicalRule {
+            name: "youtube-shortlink".to_string(),
+            match_regex: r"https?://youtu\.be/(?P<id>[a-zA-Z0-9_-]+)".to_string(),
+            canonical: "https://www.youtube.com/watch?v={id}".to_string(),
+        },
+        CanonicalRule {
+            name: "youtube-mobile".to_string(),
+            match_regex: r"https?://m\.youtube\.com/watch\?v=(?P<id>[a-zA-Z0-9_-]+)".to_string(),
+            canonical: "https://www.youtube.com/watch?v={id}".to_string(),
+        },
+        CanonicalRule {
+            name: "youtube-music".to_string(),
+            match_regex: r"https?://music\.youtube\.com/watch\?v=(?P<id>[a-zA-Z0-9_-]+)".to_string(),
+            canonical: "https://www.youtube.com/watch?v={id}".to_string(),
+        },
+        CanonicalRule {
+            name: "youtube-nocookie".to_string(),
+            match_regex: r"https?://www\.youtube-nocookie\.com/embed/(?P<id>[a-zA-Z0-9_-]+)".to_string(),
+            canonical: "https://www.youtube.com/watch?v={id}".to_string(),
+        },
+        // Twitter/X — normalize to x.com
+        CanonicalRule {
+            name: "twitter-to-x".to_string(),
+            match_regex: r"https?://twitter\.com/(?P<path>.*)".to_string(),
+            canonical: "https://x.com/{path}".to_string(),
+        },
+        CanonicalRule {
+            name: "mobile-twitter".to_string(),
+            match_regex: r"https?://mobile\.twitter\.com/(?P<path>.*)".to_string(),
+            canonical: "https://x.com/{path}".to_string(),
+        },
+    ]
+}
+
+/// Merge user-provided rules with built-in defaults.
+/// Config rules with the same name replace the built-in; new names are appended.
+pub fn merge_canonicalization_rules(config_rules: &[CanonicalRule]) -> Vec<CanonicalRule> {
+    let defaults = default_canonicalization_rules();
+    if config_rules.is_empty() {
+        return defaults;
+    }
+
+    let mut merged: Vec<CanonicalRule> = Vec::new();
+    for default in &defaults {
+        if let Some(override_rule) = config_rules.iter().find(|r| r.name == default.name) {
+            merged.push(override_rule.clone());
+        } else {
+            merged.push(default.clone());
+        }
+    }
+    // Append config rules that don't match any built-in name
+    for rule in config_rules {
+        if !defaults.iter().any(|d| d.name == rule.name) {
+            merged.push(rule.clone());
+        }
+    }
+    merged
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -77,6 +175,7 @@ pub struct Config {
     pub frontmatter: FrontmatterConfig,
     pub routing: RoutingConfig,
     pub hotkey: HotkeyConfig,
+    pub canonicalization: CanonicalConfig,
     pub log_level: Option<String>,
     pub debug: bool,
 }
@@ -427,6 +526,57 @@ discord:
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         assert!(config.telegram.is_some());
         assert!(config.discord.is_some());
+    }
+
+    #[test]
+    fn test_default_canonicalization_rules() {
+        let rules = default_canonicalization_rules();
+        assert!(!rules.is_empty());
+        assert_eq!(rules[0].name, "youtube-shorts-mobile");
+    }
+
+    #[test]
+    fn test_merge_canonicalization_rules_empty_config() {
+        let merged = merge_canonicalization_rules(&[]);
+        assert_eq!(merged.len(), default_canonicalization_rules().len());
+    }
+
+    #[test]
+    fn test_merge_canonicalization_rules_override() {
+        let overrides = vec![CanonicalRule {
+            name: "youtube-shortlink".to_string(),
+            match_regex: "custom".to_string(),
+            canonical: "custom".to_string(),
+        }];
+        let merged = merge_canonicalization_rules(&overrides);
+        let rule = merged.iter().find(|r| r.name == "youtube-shortlink").expect("found");
+        assert_eq!(rule.match_regex, "custom");
+    }
+
+    #[test]
+    fn test_merge_canonicalization_rules_append() {
+        let custom = vec![CanonicalRule {
+            name: "old-reddit".to_string(),
+            match_regex: "r".to_string(),
+            canonical: "c".to_string(),
+        }];
+        let merged = merge_canonicalization_rules(&custom);
+        assert_eq!(merged.len(), default_canonicalization_rules().len() + 1);
+        assert_eq!(merged.last().expect("last").name, "old-reddit");
+    }
+
+    #[test]
+    fn test_config_with_canonicalization() {
+        let yaml = r#"
+canonicalization:
+  rules:
+    - name: old-reddit
+      match: 'https?://old\.reddit\.com/(?P<path>.*)'
+      canonical: "https://www.reddit.com/{path}"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        assert_eq!(config.canonicalization.rules.len(), 1);
+        assert_eq!(config.canonicalization.rules[0].name, "old-reddit");
     }
 
     #[test]

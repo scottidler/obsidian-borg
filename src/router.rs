@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use crate::config::LinkConfig;
-use crate::hygiene;
 use crate::types::{IngestResult, IngestStatus};
 
 static URL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"https?://\S+").expect("valid regex"));
@@ -36,16 +35,16 @@ impl UrlMatch {
     }
 }
 
-pub fn classify_url(raw_url: &str, links: &[LinkConfig]) -> eyre::Result<UrlMatch> {
-    let cleaned = hygiene::clean_url(raw_url)?;
-
+/// Classify a pre-normalized URL against link config patterns.
+/// The URL should already be cleaned and canonicalized before calling this.
+pub fn classify_url(normalized_url: &str, links: &[LinkConfig]) -> eyre::Result<UrlMatch> {
     for link in links {
         let re = regex::Regex::new(&link.regex)?;
-        if re.is_match(&cleaned) {
+        if re.is_match(normalized_url) {
             let is_shorts = link.name == "shorts";
             let (width, height) = resolve_dimensions(&link.resolution, is_shorts);
             return Ok(UrlMatch {
-                url: cleaned,
+                url: normalized_url.to_string(),
                 link_name: link.name.clone(),
                 folder: link.folder.clone(),
                 width,
@@ -56,7 +55,7 @@ pub fn classify_url(raw_url: &str, links: &[LinkConfig]) -> eyre::Result<UrlMatc
 
     // Should not happen if config has a catch-all, but fallback
     Ok(UrlMatch {
-        url: cleaned,
+        url: normalized_url.to_string(),
         link_name: "default".to_string(),
         folder: String::new(),
         width: 854,
@@ -181,18 +180,17 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_url() {
-        let result = classify_url("not a url", &test_links());
-        assert!(result.is_err());
+    fn test_non_url_matches_default() {
+        // classify_url no longer validates URLs (that's normalize_url's job)
+        // Non-URL text matches the catch-all default pattern
+        let result = classify_url("not a url", &test_links()).expect("valid");
+        assert_eq!(result.link_name, "default");
     }
 
     #[test]
-    fn test_url_cleaning_integrated() {
-        let result = classify_url(
-            "https://www.youtube.com/watch?v=abc&utm_source=twitter&si=track",
-            &test_links(),
-        )
-        .expect("valid");
+    fn test_pre_normalized_url() {
+        // classify_url now expects pre-normalized URLs
+        let result = classify_url("https://www.youtube.com/watch?v=abc", &test_links()).expect("valid");
         assert_eq!(result.url, "https://www.youtube.com/watch?v=abc");
         assert_eq!(result.link_name, "youtube");
     }

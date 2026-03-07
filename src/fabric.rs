@@ -231,13 +231,12 @@ pub fn resolve_binary(config: &FabricConfig) -> String {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !resolved.is_empty() {
-                log::debug!("Resolved fabric binary: {binary} -> {resolved}");
-                return resolved;
-            }
+        let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !resolved.is_empty() {
+            log::debug!("Resolved fabric binary: {binary} -> {resolved}");
+            return resolved;
         }
     }
     binary.clone()

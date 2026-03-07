@@ -39,7 +39,11 @@ pub async fn process_url(url: &str, tags: Vec<String>, config: &Config) -> Inges
 async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Result<IngestResult> {
     log::debug!("Processing URL: {url}");
 
-    let url_match = router::classify_url(url, &config.links)?;
+    // Normalize URL (clean + canonicalize) before classification
+    let canonical = hygiene::normalize_url(url, &config.canonicalization.rules)?;
+    log::debug!("Canonical URL: {canonical}");
+
+    let url_match = router::classify_url(&canonical, &config.links)?;
     log::debug!(
         "URL classified as: {} (cleaned: {})",
         url_match.link_name,
