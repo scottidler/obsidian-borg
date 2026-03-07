@@ -5,6 +5,7 @@
 pub mod borg_log;
 pub mod cli;
 pub mod config;
+pub mod dashboard;
 pub mod discord;
 pub mod error;
 pub mod fabric;
@@ -55,6 +56,14 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     log::debug!("Transcriber URL: {}", config.transcriber.url);
     log::debug!("Groq model: {}", config.groq.model);
     log::debug!("LLM provider: {}, model: {}", config.llm.provider, config.llm.model);
+
+    // Ensure vault system files exist on startup
+    if let Err(e) = borg_log::ensure_log_exists(&borg_log::log_path(&config)) {
+        log::warn!("Failed to ensure Borg Log exists: {e:#}");
+    }
+    if let Err(e) = dashboard::ensure_dashboard_exists(&dashboard::dashboard_path(&config)) {
+        log::warn!("Failed to ensure Borg Dashboard exists: {e:#}");
+    }
 
     let config = Arc::new(config);
     let mut tasks = tokio::task::JoinSet::new();
