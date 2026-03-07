@@ -71,15 +71,24 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
 
     let sanitized_tags: Vec<String> = tags.iter().map(|t| url_hygiene::sanitize_tag(t)).collect();
 
+    // Generate embed code for YouTube
+    let embed_code = if url_match.is_youtube_type() {
+        youtube::extract_video_id(&url_match.url)
+            .map(|vid| youtube::generate_embed_code(&vid, url_match.width, url_match.height))
+    } else {
+        None
+    };
+
     let note = NoteContent {
         title: title.clone(),
         source_url: url_match.url.clone(),
         tags: sanitized_tags.clone(),
         summary,
         content_type,
+        embed_code,
     };
 
-    let rendered = markdown::render_note(&note);
+    let rendered = markdown::render_note(&note, &config.frontmatter);
     let filename = format!("{}.md", url_hygiene::sanitize_filename(&title));
 
     let inbox_path = expand_tilde(&config.vault.inbox_path);

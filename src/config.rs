@@ -62,6 +62,7 @@ pub struct Config {
     #[serde(default = "default_links")]
     pub links: Vec<LinkConfig>,
     pub fabric: FabricConfig,
+    pub frontmatter: FrontmatterConfig,
     pub log_level: Option<String>,
     pub debug: bool,
 }
@@ -127,6 +128,26 @@ impl Default for FabricConfig {
             tag_pattern: "create_tags".to_string(),
             classify_pattern: "obsidian_classify".to_string(),
             max_content_chars: 30000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FrontmatterConfig {
+    #[serde(default)]
+    pub default_tags: Vec<String>,
+    #[serde(default)]
+    pub default_author: String,
+    pub timezone: String,
+}
+
+impl Default for FrontmatterConfig {
+    fn default() -> Self {
+        Self {
+            default_tags: vec![],
+            default_author: String::new(),
+            timezone: "America/Los_Angeles".to_string(),
         }
     }
 }
