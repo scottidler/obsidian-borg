@@ -199,7 +199,7 @@ async fn process_youtube_legacy(url: &str, config: &Config) -> Result<(String, S
             let audio_bytes = std::fs::read(&audio_path)?;
             let _ = std::fs::remove_file(&audio_path);
 
-            let groq_key = std::env::var(&config.groq.api_key_env).ok();
+            let groq_key = crate::config::resolve_secret(&config.groq.api_key).ok();
             let client = TranscriptionClient::new(
                 &config.transcriber.url,
                 groq_key,

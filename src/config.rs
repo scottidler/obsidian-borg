@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Resolve a secret value: if the value is a path to an existing file, read its contents;
+/// otherwise treat it as an environment variable name and resolve from env.
+pub fn resolve_secret(value: &str) -> Result<String> {
+    let expanded = shellexpand::tilde(value);
+    let path = Path::new(expanded.as_ref());
+    if path.exists() {
+        Ok(fs::read_to_string(path)?.trim().to_string())
+    } else {
+        std::env::var(value).context(format!("secret '{value}' is not a file and env var is not set"))
+    }
+}
+
 const APP_NAME: &str = "obsidian-borg";
 
 /// Load configuration with fallback chain:
@@ -182,14 +194,14 @@ pub struct TopicRoute {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TelegramConfig {
-    pub bot_token_env: String,
+    pub bot_token: String,
     #[serde(default)]
     pub allowed_chat_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DiscordConfig {
-    pub bot_token_env: String,
+    pub bot_token: String,
     pub channel_id: u64,
 }
 
@@ -217,7 +229,7 @@ pub struct TranscriberConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct GroqConfig {
-    pub api_key_env: String,
+    pub api_key: String,
     pub model: String,
 }
 
@@ -226,7 +238,7 @@ pub struct GroqConfig {
 pub struct LlmConfig {
     pub provider: String,
     pub model: String,
-    pub api_key_env: String,
+    pub api_key: String,
 }
 
 impl Default for ServerConfig {
@@ -259,7 +271,7 @@ impl Default for TranscriberConfig {
 impl Default for GroqConfig {
     fn default() -> Self {
         Self {
-            api_key_env: "GROQ_API_KEY".to_string(),
+            api_key: "GROQ_API_KEY".to_string(),
             model: "whisper-large-v3".to_string(),
         }
     }
@@ -270,7 +282,7 @@ impl Default for LlmConfig {
         Self {
             provider: "claude".to_string(),
             model: "claude-sonnet-4-6".to_string(),
-            api_key_env: "ANTHROPIC_API_KEY".to_string(),
+            api_key: "ANTHROPIC_API_KEY".to_string(),
         }
     }
 }
@@ -347,12 +359,12 @@ server:
     fn test_config_with_telegram_section() {
         let yaml = r#"
 telegram:
-  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  bot_token: "TELEGRAM_BOT_TOKEN"
   allowed_chat_ids: [123456, 789012]
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         let tg = config.telegram.expect("telegram should be Some");
-        assert_eq!(tg.bot_token_env, "TELEGRAM_BOT_TOKEN");
+        assert_eq!(tg.bot_token, "TELEGRAM_BOT_TOKEN");
         assert_eq!(tg.allowed_chat_ids, vec![123456, 789012]);
     }
 
@@ -360,7 +372,7 @@ telegram:
     fn test_config_with_telegram_no_allowed_ids() {
         let yaml = r#"
 telegram:
-  bot_token_env: "TELEGRAM_BOT_TOKEN"
+  bot_token: "TELEGRAM_BOT_TOKEN"
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         let tg = config.telegram.expect("telegram should be Some");
@@ -371,12 +383,12 @@ telegram:
     fn test_config_with_discord_section() {
         let yaml = r#"
 discord:
-  bot_token_env: "DISCORD_BOT_TOKEN"
+  bot_token: "DISCORD_BOT_TOKEN"
   channel_id: 1234567890
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         let dc = config.discord.expect("discord should be Some");
-        assert_eq!(dc.bot_token_env, "DISCORD_BOT_TOKEN");
+        assert_eq!(dc.bot_token, "DISCORD_BOT_TOKEN");
         assert_eq!(dc.channel_id, 1234567890);
     }
 
@@ -384,13 +396,40 @@ discord:
     fn test_config_with_both_bots() {
         let yaml = r#"
 telegram:
-  bot_token_env: "TG_TOKEN"
+  bot_token: "TG_TOKEN"
 discord:
-  bot_token_env: "DC_TOKEN"
+  bot_token: "DC_TOKEN"
   channel_id: 999
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         assert!(config.telegram.is_some());
         assert!(config.discord.is_some());
+    }
+
+    #[test]
+    fn test_resolve_secret_from_file() {
+        let dir = std::env::temp_dir().join("obsidian-borg-test-secret");
+        fs::create_dir_all(&dir).expect("create dir");
+        let file = dir.join("test-token");
+        fs::write(&file, "  my-secret-value\n").expect("write");
+        let result = resolve_secret(file.to_str().expect("path")).expect("resolve");
+        assert_eq!(result, "my-secret-value");
+        let _ = fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_resolve_secret_from_env() {
+        let key = "OBSIDIAN_BORG_TEST_SECRET_42";
+        // SAFETY: single-threaded test, no other threads reading this env var
+        unsafe { std::env::set_var(key, "env-secret-value") };
+        let result = resolve_secret(key).expect("resolve");
+        assert_eq!(result, "env-secret-value");
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn test_resolve_secret_missing() {
+        let result = resolve_secret("NONEXISTENT_VAR_OBSBORG_TEST_999");
+        assert!(result.is_err());
     }
 }

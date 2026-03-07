@@ -45,11 +45,7 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     log::info!("Server address: {addr}");
     log::debug!("Vault inbox: {}", config.vault.inbox_path);
     log::debug!("Transcriber URL: {}", config.transcriber.url);
-    log::debug!(
-        "Groq model: {}, key env: {}",
-        config.groq.model,
-        config.groq.api_key_env
-    );
+    log::debug!("Groq model: {}", config.groq.model);
     log::debug!("LLM provider: {}, model: {}", config.llm.provider, config.llm.model);
 
     let config = Arc::new(config);
@@ -64,7 +60,7 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
 
     // Telegram bot (config-driven)
     if let Some(tg_config) = &config.telegram {
-        let token = std::env::var(&tg_config.bot_token_env).context("Telegram bot token env var not set")?;
+        let token = config::resolve_secret(&tg_config.bot_token).context("Failed to resolve Telegram bot token")?;
         log::info!(
             "Telegram bot enabled (allowed_chat_ids: {:?})",
             tg_config.allowed_chat_ids
@@ -77,7 +73,7 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
 
     // Discord bot (config-driven)
     if let Some(dc_config) = &config.discord {
-        let token = std::env::var(&dc_config.bot_token_env).context("Discord bot token env var not set")?;
+        let token = config::resolve_secret(&dc_config.bot_token).context("Failed to resolve Discord bot token")?;
         log::info!("Discord bot enabled (channel_id: {})", dc_config.channel_id);
         let dc = dc_config.clone();
         let cfg = config.clone();
