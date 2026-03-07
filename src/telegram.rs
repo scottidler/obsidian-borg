@@ -27,10 +27,16 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
             log::info!("Telegram: processing URL {url} from chat {}", message.chat.id);
             bot.send_message(message.chat.id, "Processing...").await?;
 
-            let result = pipeline::process_url(&url, vec![], &config).await;
-            log::debug!("Pipeline result: {:?}", result.status);
-            let reply = format_reply(&result, &url);
-            bot.send_message(message.chat.id, reply).await?;
+            let chat_id = message.chat.id;
+            let bot_clone = bot.clone();
+            tokio::spawn(async move {
+                let result = pipeline::process_url(&url, vec![], &config).await;
+                log::debug!("Pipeline result: {:?}", result.status);
+                let reply = format_reply(&result, &url);
+                if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                    log::error!("Failed to send Telegram reply: {e}");
+                }
+            });
 
             Ok(())
         }
