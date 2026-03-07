@@ -356,4 +356,53 @@ mod tests {
         let resp = app.oneshot(req).await.expect("response");
         assert_eq!(resp.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn test_cors_preflight() {
+        let app = test_router();
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/ingest")
+            .header("origin", "https://example.com")
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().contains_key("access-control-allow-origin"));
+    }
+
+    #[tokio::test]
+    async fn test_cors_on_response() {
+        let app = test_router();
+        let req = Request::builder()
+            .uri("/health")
+            .header("origin", "https://example.com")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let origin = resp.headers().get("access-control-allow-origin").expect("cors header");
+        assert_eq!(origin, "*");
+    }
+
+    #[tokio::test]
+    async fn test_run_ingest_connection_refused() {
+        // Use a port that's almost certainly not listening
+        let config = Config {
+            server: config::ServerConfig {
+                host: "127.0.0.1".to_string(),
+                port: 19999,
+            },
+            ..Config::default()
+        };
+        let result = run_ingest(config, "https://example.com".to_string(), None).await;
+        assert!(result.is_err());
+        let err = format!("{}", result.expect_err("expected error"));
+        assert!(
+            err.contains("cannot reach obsidian-borg"),
+            "expected connection error message, got: {err}"
+        );
+    }
 }
