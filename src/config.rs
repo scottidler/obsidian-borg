@@ -63,6 +63,7 @@ pub struct Config {
     pub links: Vec<LinkConfig>,
     pub fabric: FabricConfig,
     pub frontmatter: FrontmatterConfig,
+    pub routing: RoutingConfig,
     pub log_level: Option<String>,
     pub debug: bool,
 }
@@ -153,6 +154,33 @@ impl Default for FrontmatterConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct RoutingConfig {
+    pub confidence_threshold: f64,
+    pub fallback_folder: String,
+    pub research_date_subfolder: bool,
+    #[serde(default)]
+    pub routes: Vec<TopicRoute>,
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            confidence_threshold: 0.6,
+            fallback_folder: "Inbox".to_string(),
+            research_date_subfolder: true,
+            routes: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TopicRoute {
+    pub keywords: Vec<String>,
+    pub folder: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TelegramConfig {
     pub bot_token_env: String,
     #[serde(default)]
@@ -175,6 +203,7 @@ pub struct ServerConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VaultConfig {
+    pub root_path: String,
     pub inbox_path: String,
 }
 
@@ -212,6 +241,7 @@ impl Default for ServerConfig {
 impl Default for VaultConfig {
     fn default() -> Self {
         Self {
+            root_path: "~/obsidian-vault".to_string(),
             inbox_path: "~/obsidian-vault/Inbox".to_string(),
         }
     }

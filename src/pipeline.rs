@@ -69,7 +69,52 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
         process_article_jina(&url_match.url).await?
     };
 
-    let sanitized_tags: Vec<String> = tags.iter().map(|t| url_hygiene::sanitize_tag(t)).collect();
+    let mut all_tags: Vec<String> = tags.iter().map(|t| url_hygiene::sanitize_tag(t)).collect();
+
+    // Generate tags via Fabric (graceful failure)
+    if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(&summary, &config.fabric).await {
+        all_tags.extend(fabric_tags.into_iter().map(|t| url_hygiene::sanitize_tag(&t)));
+    }
+    all_tags.sort();
+    all_tags.dedup();
+
+    // Resolve destination folder (3-tier routing)
+    let folder = if !url_match.folder.is_empty() {
+        // Tier 1: URL-type routing from config
+        log::debug!("Tier 1 routing: URL config -> {}", url_match.folder);
+        url_match.folder.clone()
+    } else if use_fabric {
+        // Tier 2: LLM topic classification
+        match fabric::classify_topic(&title, &summary, &config.fabric).await {
+            Ok(result) if result.confidence >= config.routing.confidence_threshold => {
+                log::info!(
+                    "Tier 2 routing: LLM classified -> {} (confidence: {:.2})",
+                    result.folder,
+                    result.confidence
+                );
+                all_tags.extend(result.suggested_tags.into_iter().map(|t| url_hygiene::sanitize_tag(&t)));
+                all_tags.sort();
+                all_tags.dedup();
+                result.folder
+            }
+            Ok(result) => {
+                log::info!(
+                    "Tier 2 routing: low confidence {:.2} for '{}', falling back",
+                    result.confidence,
+                    result.folder
+                );
+                config.routing.fallback_folder.clone()
+            }
+            Err(e) => {
+                log::warn!("Tier 2 routing failed: {e:#}, using fallback");
+                config.routing.fallback_folder.clone()
+            }
+        }
+    } else {
+        // Tier 3: Fallback
+        log::debug!("Tier 3 routing: fallback -> {}", config.routing.fallback_folder);
+        config.routing.fallback_folder.clone()
+    };
 
     // Generate embed code for YouTube
     let embed_code = if url_match.is_youtube_type() {
@@ -82,7 +127,7 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
     let note = NoteContent {
         title: title.clone(),
         source_url: url_match.url.clone(),
-        tags: sanitized_tags.clone(),
+        tags: all_tags.clone(),
         summary,
         content_type,
         embed_code,
@@ -91,21 +136,27 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let filename = format!("{}.md", url_hygiene::sanitize_filename(&title));
 
-    let inbox_path = expand_tilde(&config.vault.inbox_path);
-    std::fs::create_dir_all(&inbox_path).context("Failed to create vault inbox directory")?;
+    // Resolve write path
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
-    let note_path = inbox_path.join(&filename);
+    let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
-    log::info!("Wrote note: {}", note_path.display());
+    log::info!("Wrote note: {} (folder: {})", note_path.display(), folder);
 
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
         title: Some(title),
-        tags: sanitized_tags,
+        tags: all_tags,
         elapsed_secs: None,
-        folder: None,
+        folder: Some(folder),
     })
 }
 
@@ -200,6 +251,29 @@ async fn process_article_jina(url: &str) -> Result<(String, String, ContentType)
     Ok((title, article_md, ContentType::Article))
 }
 
+fn resolve_destination(
+    root_path: &str,
+    inbox_path: &str,
+    folder: &str,
+    routing: &crate::config::RoutingConfig,
+) -> PathBuf {
+    if folder.is_empty() || folder == routing.fallback_folder {
+        // Use inbox_path for fallback/Inbox
+        return expand_tilde(inbox_path);
+    }
+
+    let root = expand_tilde(root_path);
+    let mut dest = root.join(folder);
+
+    // Add date subfolder for research content
+    if routing.research_date_subfolder && folder.contains("research") {
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        dest = dest.join(date);
+    }
+
+    dest
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()
@@ -224,5 +298,47 @@ mod tests {
     fn test_expand_tilde_no_tilde() {
         let expanded = expand_tilde("/absolute/path");
         assert_eq!(expanded, PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn test_resolve_destination_fallback() {
+        let routing = crate::config::RoutingConfig {
+            fallback_folder: "Inbox".to_string(),
+            ..Default::default()
+        };
+        let dest = resolve_destination("/vault", "/vault/Inbox", "Inbox", &routing);
+        assert_eq!(dest, PathBuf::from("/vault/Inbox"));
+    }
+
+    #[test]
+    fn test_resolve_destination_empty_folder() {
+        let routing = crate::config::RoutingConfig::default();
+        let dest = resolve_destination("/vault", "/vault/Inbox", "", &routing);
+        assert_eq!(dest, PathBuf::from("/vault/Inbox"));
+    }
+
+    #[test]
+    fn test_resolve_destination_specific_folder() {
+        let routing = crate::config::RoutingConfig {
+            research_date_subfolder: false,
+            ..Default::default()
+        };
+        let dest = resolve_destination("/vault", "/vault/Inbox", "Tech/AI-LLM", &routing);
+        assert_eq!(dest, PathBuf::from("/vault/Tech/AI-LLM"));
+    }
+
+    #[test]
+    fn test_resolve_destination_research_date_subfolder() {
+        let routing = crate::config::RoutingConfig {
+            research_date_subfolder: true,
+            ..Default::default()
+        };
+        let dest = resolve_destination("/vault", "/vault/Inbox", "Football/research", &routing);
+        // Should have a date subfolder
+        let dest_str = dest.to_string_lossy();
+        assert!(dest_str.starts_with("/vault/Football/research/"));
+        // Date format: YYYY-MM-DD
+        let date_part = dest_str.strip_prefix("/vault/Football/research/").expect("prefix");
+        assert_eq!(date_part.len(), 10); // YYYY-MM-DD
     }
 }
