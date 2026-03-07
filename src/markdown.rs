@@ -101,7 +101,7 @@ fn escape_yaml_string(s: &str) -> String {
 }
 
 pub fn sanitize_filename(title: &str) -> String {
-    crate::url_hygiene::sanitize_filename(title)
+    crate::hygiene::sanitize_filename(title)
 }
 
 #[cfg(test)]

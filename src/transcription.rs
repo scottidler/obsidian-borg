@@ -28,20 +28,40 @@ impl TranscriptionClient {
         language: Option<String>,
     ) -> Result<TranscriptionResponse> {
         // Tier 2: Try remote transcriber first
+        log::debug!(
+            "Tier 2: Trying remote transcriber at {} ({} bytes audio)",
+            self.transcriber_url,
+            audio_bytes.len()
+        );
         match self.try_transcriber(&audio_bytes, &format, &language).await {
             Ok(response) => {
-                log::info!("Transcription via remote transcriber succeeded");
+                log::info!(
+                    "Transcription via remote transcriber succeeded ({} chars)",
+                    response.text.len()
+                );
                 return Ok(response);
             }
             Err(e) => {
-                log::warn!("Remote transcriber failed, falling back to Groq: {e}");
+                log::warn!("Remote transcriber failed: {e:#}");
             }
         }
 
         // Tier 3: Fall back to Groq API
-        self.try_groq(&audio_bytes, &format, &language)
-            .await
-            .context("Both transcriber and Groq fallback failed")
+        log::debug!(
+            "Tier 3: Trying Groq API (model={}, key={})",
+            self.groq_model,
+            if self.groq_api_key.is_some() { "present" } else { "MISSING" }
+        );
+        match self.try_groq(&audio_bytes, &format, &language).await {
+            Ok(response) => {
+                log::info!("Transcription via Groq succeeded ({} chars)", response.text.len());
+                Ok(response)
+            }
+            Err(e) => {
+                log::error!("Groq transcription also failed: {e:#}");
+                Err(e).context("Both transcriber and Groq fallback failed")
+            }
+        }
     }
 
     async fn try_transcriber(

@@ -1,6 +1,6 @@
 use crate::config::{Config, TelegramConfig};
 use crate::pipeline;
-use crate::url_router::{extract_url_from_text, format_reply};
+use crate::router::{extract_url_from_text, format_reply};
 use eyre::Result;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -17,14 +17,18 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
             }
 
             let text = message.text().unwrap_or("");
+            log::debug!("Telegram message from chat {}: {text}", message.chat.id);
             let Some(url) = extract_url_from_text(text) else {
+                log::debug!("No URL found in message");
                 bot.send_message(message.chat.id, "No URL found in message.").await?;
                 return Ok(());
             };
 
+            log::info!("Telegram: processing URL {url} from chat {}", message.chat.id);
             bot.send_message(message.chat.id, "Processing...").await?;
 
             let result = pipeline::process_url(&url, vec![], &config).await;
+            log::debug!("Pipeline result: {:?}", result.status);
             let reply = format_reply(&result, &url);
             bot.send_message(message.chat.id, reply).await?;
 

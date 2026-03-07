@@ -1,11 +1,11 @@
 use crate::config::Config;
 use crate::fabric;
+use crate::hygiene;
 use crate::jina;
 use crate::markdown::{self, ContentType, NoteContent};
-use crate::transcription_client::TranscriptionClient;
+use crate::router;
+use crate::transcription::TranscriptionClient;
 use crate::types::{AudioFormat, IngestResult, IngestStatus};
-use crate::url_hygiene;
-use crate::url_router;
 use crate::youtube;
 use eyre::{Context, Result};
 use std::path::PathBuf;
@@ -39,7 +39,7 @@ pub async fn process_url(url: &str, tags: Vec<String>, config: &Config) -> Inges
 async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Result<IngestResult> {
     log::debug!("Processing URL: {url}");
 
-    let url_match = url_router::classify_url(url, &config.links)?;
+    let url_match = router::classify_url(url, &config.links)?;
     log::debug!(
         "URL classified as: {} (cleaned: {})",
         url_match.link_name,
@@ -69,11 +69,11 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
         process_article_jina(&url_match.url).await?
     };
 
-    let mut all_tags: Vec<String> = tags.iter().map(|t| url_hygiene::sanitize_tag(t)).collect();
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
 
     // Generate tags via Fabric (graceful failure)
     if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(&summary, &config.fabric).await {
-        all_tags.extend(fabric_tags.into_iter().map(|t| url_hygiene::sanitize_tag(&t)));
+        all_tags.extend(fabric_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
     }
     all_tags.sort();
     all_tags.dedup();
@@ -92,7 +92,7 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
                     result.folder,
                     result.confidence
                 );
-                all_tags.extend(result.suggested_tags.into_iter().map(|t| url_hygiene::sanitize_tag(&t)));
+                all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
                 all_tags.sort();
                 all_tags.dedup();
                 result.folder
@@ -134,7 +134,7 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
-    let filename = format!("{}.md", url_hygiene::sanitize_filename(&title));
+    let filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
     // Resolve write path
     let dest_path = resolve_destination(

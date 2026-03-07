@@ -1,6 +1,6 @@
 use crate::config::{Config, DiscordConfig};
 use crate::pipeline;
-use crate::url_router::{extract_url_from_text, format_reply};
+use crate::router::{extract_url_from_text, format_reply};
 use eyre::{Context, Result};
 use serenity::async_trait;
 use serenity::model::channel::Message;

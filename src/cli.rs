@@ -16,4 +16,8 @@ pub struct Cli {
     /// Enable verbose output
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Log level (trace, debug, info, warn, error)
+    #[arg(short, long)]
+    pub log_level: Option<String>,
 }

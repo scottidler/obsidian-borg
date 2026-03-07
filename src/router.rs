@@ -1,8 +1,8 @@
 use std::sync::LazyLock;
 
 use crate::config::LinkConfig;
+use crate::hygiene;
 use crate::types::{IngestResult, IngestStatus};
-use crate::url_hygiene;
 
 static URL_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"https?://\S+").expect("valid regex"));
 
@@ -37,7 +37,7 @@ impl UrlMatch {
 }
 
 pub fn classify_url(raw_url: &str, links: &[LinkConfig]) -> eyre::Result<UrlMatch> {
-    let cleaned = url_hygiene::clean_url(raw_url)?;
+    let cleaned = hygiene::clean_url(raw_url)?;
 
     for link in links {
         let re = regex::Regex::new(&link.regex)?;
