@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::fabric;
 use crate::jina;
 use crate::markdown::{self, ContentType, NoteContent};
 use crate::transcription_client::TranscriptionClient;
@@ -45,10 +46,27 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
         url_match.url
     );
 
+    let use_fabric = fabric::is_available(&config.fabric);
+    if !use_fabric {
+        log::warn!("Fabric binary not available, falling back to legacy pipeline");
+    }
+
     let (title, summary, content_type) = if url_match.is_youtube_type() {
-        process_youtube(&url_match.url, config).await?
+        if use_fabric {
+            process_youtube_fabric(&url_match.url, config).await?
+        } else {
+            process_youtube_legacy(&url_match.url, config).await?
+        }
+    } else if use_fabric {
+        match process_article_fabric(&url_match.url, config).await {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("Fabric article fetch failed: {e:#}, falling back to Jina");
+                process_article_jina(&url_match.url).await?
+            }
+        }
     } else {
-        process_article(&url_match.url).await?
+        process_article_jina(&url_match.url).await?
     };
 
     let sanitized_tags: Vec<String> = tags.iter().map(|t| url_hygiene::sanitize_tag(t)).collect();
@@ -82,55 +100,53 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
     })
 }
 
-async fn process_youtube(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
+async fn process_youtube_fabric(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
+    let yt = fabric::fetch_youtube(url, &config.fabric).await?;
+
+    let transcript = if yt.transcript.is_empty() {
+        log::warn!("Fabric returned empty transcript, falling back to yt-dlp");
+        youtube::fetch_subtitles(url).await?.unwrap_or_default()
+    } else {
+        yt.transcript
+    };
+
+    // Summarize via Fabric (graceful failure)
+    let summary = fabric::summarize(&transcript, true, &config.fabric)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("Fabric summarization failed: {e:#}");
+            transcript.clone()
+        });
+
+    let content_type = ContentType::YouTube {
+        uploader: yt.channel,
+        duration_secs: yt.duration_secs,
+    };
+
+    Ok((yt.title, summary, content_type))
+}
+
+async fn process_youtube_legacy(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
     log::debug!("Fetching YouTube metadata for: {url}");
     let metadata = youtube::fetch_metadata(url)?;
-    log::debug!(
-        "Metadata: title={}, uploader={}, duration={}s",
-        metadata.title,
-        metadata.uploader,
-        metadata.duration_secs
-    );
 
-    // Tier 1: Try auto-subtitles
-    log::debug!("Tier 1: Attempting auto-subtitles for: {url}");
     let transcript = match youtube::fetch_subtitles(url).await? {
-        Some(subs) => {
-            log::info!("Got auto-subtitles for: {} ({} chars)", metadata.title, subs.len());
-            subs
-        }
+        Some(subs) => subs,
         None => {
-            log::info!("No auto-subs, extracting audio for: {}", metadata.title);
-            // Extract audio and transcribe via Tier 2/3
             let temp_dir = std::env::temp_dir().join("obsidian-borg");
             std::fs::create_dir_all(&temp_dir)?;
-            log::debug!("Extracting audio to: {}", temp_dir.display());
             let audio_path = youtube::extract_audio(url, &temp_dir.to_string_lossy())?;
             let audio_bytes = std::fs::read(&audio_path)?;
-            log::debug!("Audio extracted: {} bytes from {}", audio_bytes.len(), audio_path);
             let _ = std::fs::remove_file(&audio_path);
 
             let groq_key = std::env::var(&config.groq.api_key_env).ok();
-            log::debug!(
-                "Groq API key from {}: {}",
-                config.groq.api_key_env,
-                if groq_key.is_some() { "present" } else { "MISSING" }
-            );
             let client = TranscriptionClient::new(
                 &config.transcriber.url,
                 groq_key,
                 &config.groq.model,
                 config.transcriber.timeout_secs,
             );
-
-            log::debug!(
-                "Tier 2/3: Sending {} bytes for transcription (transcriber={}, groq_model={})",
-                audio_bytes.len(),
-                config.transcriber.url,
-                config.groq.model
-            );
             let response = client.transcribe(audio_bytes, AudioFormat::Mp3, None).await?;
-            log::debug!("Transcription succeeded: {} chars", response.text.len());
             response.text
         }
     };
@@ -143,7 +159,27 @@ async fn process_youtube(url: &str, config: &Config) -> Result<(String, String, 
     Ok((metadata.title, transcript, content_type))
 }
 
-async fn process_article(url: &str) -> Result<(String, String, ContentType)> {
+async fn process_article_fabric(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
+    let article_md = fabric::fetch_article(url, &config.fabric).await?;
+
+    let title = article_md
+        .lines()
+        .find(|line| line.starts_with("# "))
+        .map(|line| line.trim_start_matches("# ").to_string())
+        .unwrap_or_else(|| url.to_string());
+
+    // Summarize via Fabric (graceful failure)
+    let summary = fabric::summarize(&article_md, false, &config.fabric)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("Fabric summarization failed: {e:#}");
+            article_md.clone()
+        });
+
+    Ok((title, summary, ContentType::Article))
+}
+
+async fn process_article_jina(url: &str) -> Result<(String, String, ContentType)> {
     let article_md = jina::fetch_article_markdown(url).await?;
 
     let title = article_md

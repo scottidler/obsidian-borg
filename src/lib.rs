@@ -6,6 +6,7 @@ pub mod cli;
 pub mod config;
 pub mod discord;
 pub mod error;
+pub mod fabric;
 pub mod health;
 pub mod jina;
 pub mod logging;

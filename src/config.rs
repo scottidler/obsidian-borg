@@ -61,6 +61,7 @@ pub struct Config {
     pub discord: Option<DiscordConfig>,
     #[serde(default = "default_links")]
     pub links: Vec<LinkConfig>,
+    pub fabric: FabricConfig,
     pub log_level: Option<String>,
     pub debug: bool,
 }
@@ -102,6 +103,32 @@ pub struct LinkConfig {
 
 fn default_resolution() -> String {
     "FWVGA".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FabricConfig {
+    pub binary: String,
+    pub model: String,
+    pub summarize_pattern_youtube: String,
+    pub summarize_pattern_article: String,
+    pub tag_pattern: String,
+    pub classify_pattern: String,
+    pub max_content_chars: usize,
+}
+
+impl Default for FabricConfig {
+    fn default() -> Self {
+        Self {
+            binary: "fabric".to_string(),
+            model: String::new(),
+            summarize_pattern_youtube: "youtube_summary".to_string(),
+            summarize_pattern_article: "extract_article_wisdom".to_string(),
+            tag_pattern: "create_tags".to_string(),
+            classify_pattern: "obsidian_classify".to_string(),
+            max_content_chars: 30000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
