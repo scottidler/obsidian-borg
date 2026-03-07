@@ -43,6 +43,9 @@ pub enum Command {
         /// Comma-separated tags
         #[arg(short, long, value_delimiter = ',')]
         tags: Option<Vec<String>>,
+        /// Force re-ingestion even if URL was already processed
+        #[arg(long)]
+        force: bool,
     },
     /// Install/uninstall a keyboard shortcut to ingest URLs from clipboard
     Hotkey(HotkeyOpts),
@@ -286,10 +289,16 @@ mod tests {
     fn test_ingest_subcommand() {
         let cli = Cli::try_parse_from(["obsidian-borg", "ingest", "https://example.com"]).expect("parse");
         match cli.command {
-            Some(Command::Ingest { url, clipboard, tags }) => {
+            Some(Command::Ingest {
+                url,
+                clipboard,
+                tags,
+                force,
+            }) => {
                 assert_eq!(url, Some("https://example.com".to_string()));
                 assert!(!clipboard);
                 assert!(tags.is_none());
+                assert!(!force);
             }
             _ => panic!("expected Ingest"),
         }

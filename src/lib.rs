@@ -2,6 +2,7 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
+pub mod borg_log;
 pub mod cli;
 pub mod config;
 pub mod discord;
@@ -129,7 +130,13 @@ pub fn resolve_ingest_url(url: Option<String>, clipboard: bool) -> Result<String
     eyre::bail!("No URL provided. Use a URL argument or --clipboard")
 }
 
-pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>, notify: bool) -> Result<()> {
+pub async fn run_ingest(
+    config: Config,
+    url: String,
+    tags: Option<Vec<String>>,
+    force: bool,
+    notify: bool,
+) -> Result<()> {
     let host = &config.hotkey.host;
     let port = config.hotkey.port;
     let endpoint = format!("http://{host}:{port}/ingest");
@@ -141,6 +148,7 @@ pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>, 
     let body = serde_json::json!({
         "url": url,
         "tags": tags.unwrap_or_default(),
+        "force": force,
     });
 
     let client = reqwest::Client::new();
@@ -686,7 +694,7 @@ mod tests {
             },
             ..Config::default()
         };
-        let result = run_ingest(config, "https://example.com".to_string(), None, false).await;
+        let result = run_ingest(config, "https://example.com".to_string(), None, false, false).await;
         assert!(result.is_err());
         let err = format!("{}", result.expect_err("expected error"));
         assert!(

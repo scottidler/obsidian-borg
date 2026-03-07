@@ -28,6 +28,7 @@ tower-http = { version = "0.6.8", features = ["cors"] }
 
 arboard = "3"
 notify-rust = "4"
+fs2 = "0.4.3"
 
 [dependencies.serenity]
 version = "0.12"

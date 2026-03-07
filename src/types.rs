@@ -49,6 +49,8 @@ pub struct IngestRequest {
     pub url: String,
     pub tags: Option<Vec<String>>,
     pub priority: Option<Priority>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,6 +111,7 @@ mod tests {
             url: "https://youtube.com/watch?v=abc".to_string(),
             tags: Some(vec!["ai".to_string(), "rust".to_string()]),
             priority: Some(Priority::High),
+            force: false,
         };
         let json = serde_yaml::to_string(&req).expect("serialize");
         let deserialized: IngestRequest = serde_yaml::from_str(&json).expect("deserialize");
