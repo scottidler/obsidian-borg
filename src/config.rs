@@ -34,7 +34,7 @@ pub fn load_config<T: DeserializeOwned + Default>(config_path: Option<&PathBuf>)
             match load_from_file(&primary_config) {
                 Ok(config) => return Ok(config),
                 Err(e) => {
-                    log::warn!("Failed to load config from {}: {}", primary_config.display(), e);
+                    eprintln!("Warning: Failed to load config from {}: {}", primary_config.display(), e);
                 }
             }
         }
@@ -45,7 +45,7 @@ pub fn load_config<T: DeserializeOwned + Default>(config_path: Option<&PathBuf>)
         match load_from_file(&fallback_config) {
             Ok(config) => return Ok(config),
             Err(e) => {
-                log::warn!("Failed to load config from {}: {}", fallback_config.display(), e);
+                eprintln!("Warning: Failed to load config from {}: {}", fallback_config.display(), e);
             }
         }
     }
@@ -194,6 +194,7 @@ pub struct TopicRoute {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TelegramConfig {
+    #[serde(alias = "bot_token_env")]
     pub bot_token: String,
     #[serde(default)]
     pub allowed_chat_ids: Vec<i64>,
@@ -201,6 +202,7 @@ pub struct TelegramConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DiscordConfig {
+    #[serde(alias = "bot_token_env")]
     pub bot_token: String,
     pub channel_id: u64,
 }
@@ -229,6 +231,7 @@ pub struct TranscriberConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct GroqConfig {
+    #[serde(alias = "api_key_env")]
     pub api_key: String,
     pub model: String,
 }
@@ -238,6 +241,7 @@ pub struct GroqConfig {
 pub struct LlmConfig {
     pub provider: String,
     pub model: String,
+    #[serde(alias = "api_key_env")]
     pub api_key: String,
 }
 

@@ -67,25 +67,39 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
 
     // Telegram bot (config-driven)
     if let Some(tg_config) = &config.telegram {
-        let token = config::resolve_secret(&tg_config.bot_token).context("Failed to resolve Telegram bot token")?;
-        log::info!(
-            "Telegram bot enabled (allowed_chat_ids: {:?})",
-            tg_config.allowed_chat_ids
-        );
-        let tg = tg_config.clone();
-        let cfg = config.clone();
-        tasks.spawn(async move { telegram::run(token, tg, cfg).await });
-        println!("{} telegram bot active", "-->".green());
+        match config::resolve_secret(&tg_config.bot_token) {
+            Ok(token) => {
+                log::info!(
+                    "Telegram bot enabled (allowed_chat_ids: {:?})",
+                    tg_config.allowed_chat_ids
+                );
+                let tg = tg_config.clone();
+                let cfg = config.clone();
+                tasks.spawn(async move { telegram::run(token, tg, cfg).await });
+                println!("{} telegram bot active", "-->".green());
+            }
+            Err(e) => {
+                log::warn!("Telegram configured but token not available: {e:#}");
+                eprintln!("{} telegram bot skipped (token not available)", "-->".yellow());
+            }
+        }
     }
 
     // Discord bot (config-driven)
     if let Some(dc_config) = &config.discord {
-        let token = config::resolve_secret(&dc_config.bot_token).context("Failed to resolve Discord bot token")?;
-        log::info!("Discord bot enabled (channel_id: {})", dc_config.channel_id);
-        let dc = dc_config.clone();
-        let cfg = config.clone();
-        tasks.spawn(async move { discord::run(token, dc, cfg).await });
-        println!("{} discord bot active", "-->".green());
+        match config::resolve_secret(&dc_config.bot_token) {
+            Ok(token) => {
+                log::info!("Discord bot enabled (channel_id: {})", dc_config.channel_id);
+                let dc = dc_config.clone();
+                let cfg = config.clone();
+                tasks.spawn(async move { discord::run(token, dc, cfg).await });
+                println!("{} discord bot active", "-->".green());
+            }
+            Err(e) => {
+                log::warn!("Discord configured but token not available: {e:#}");
+                eprintln!("{} discord bot skipped (token not available)", "-->".yellow());
+            }
+        }
     }
 
     // If any task exits (error or completion), propagate
@@ -261,7 +275,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={exe_path} serve
+ExecStart={exe_path} daemon --start
 Restart=always
 RestartSec=5
 StartLimitBurst=5
