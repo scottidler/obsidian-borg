@@ -1,6 +1,6 @@
-use crate::borg_log::{self, BorgLogEntry, BorgLogStatus};
 use crate::config::Config;
 use crate::hygiene;
+use crate::ledger::{self, LedgerEntry, LedgerStatus};
 use crate::types::IngestMethod;
 use eyre::{Context, Result};
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
     println!("Found {} markdown files to check", md_files.len());
 
     let mut changed_count = 0;
-    let mut borg_log_entries: Vec<BorgLogEntry> = Vec::new();
+    let mut ledger_entries: Vec<LedgerEntry> = Vec::new();
 
     for path in &md_files {
         let content = std::fs::read_to_string(path).context("Failed to read file")?;
@@ -131,11 +131,11 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
             && let Some(source) = fm.get("source").and_then(|v| v.as_str())
         {
             let date = fm.get("date").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-            borg_log_entries.push(BorgLogEntry {
+            ledger_entries.push(LedgerEntry {
                 date,
                 time: "00:00".to_string(),
                 method: IngestMethod::Cli,
-                status: BorgLogStatus::Completed,
+                status: LedgerStatus::Completed,
                 title: fm.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 source: source.to_string(),
                 original: source.to_string(),
@@ -147,17 +147,17 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
         }
     }
 
-    // Seed Borg Log
-    if migration.seed_borg_log && apply && !borg_log_entries.is_empty() {
-        let log_path = borg_log::log_path(config);
-        println!("Seeding Borg Log with {} entries...", borg_log_entries.len());
-        for entry in &borg_log_entries {
+    // Seed Borg Ledger
+    if migration.seed_borg_log && apply && !ledger_entries.is_empty() {
+        let log_path = ledger::ledger_path(config);
+        println!("Seeding Borg Ledger with {} entries...", ledger_entries.len());
+        for entry in &ledger_entries {
             // Skip if already in log
-            if borg_log::check_duplicate(&log_path, &entry.source)?.is_none() {
-                borg_log::append_entry(&log_path, entry)?;
+            if ledger::check_duplicate(&log_path, &entry.source)?.is_none() {
+                ledger::append_entry(&log_path, entry)?;
             }
         }
-        println!("Borg Log seeded.");
+        println!("Borg Ledger seeded.");
     }
 
     println!("\n{mode} complete: {changed_count} files would be changed");

@@ -1,8 +1,8 @@
-use crate::borg_log::{self, BorgLogEntry, BorgLogStatus};
 use crate::config::Config;
 use crate::fabric;
 use crate::hygiene;
 use crate::jina;
+use crate::ledger::{self, LedgerEntry, LedgerStatus};
 use crate::markdown::{self, ContentType, NoteContent};
 use crate::router;
 use crate::transcription::TranscriptionClient;
@@ -32,7 +32,7 @@ pub async fn process_url(
             log::error!("Pipeline failed for {url} in {elapsed:.2?}: {e:?}");
             let reason = format!("{:#}", e);
 
-            // Best-effort log failure to Borg Log
+            // Best-effort log failure to Borg Ledger
             let canonical =
                 hygiene::normalize_url(url, &config.canonicalization.rules).unwrap_or_else(|_| url.to_string());
             let tz: chrono_tz::Tz = config
@@ -41,13 +41,13 @@ pub async fn process_url(
                 .parse()
                 .unwrap_or(chrono_tz::America::Los_Angeles);
             let now = chrono::Utc::now().with_timezone(&tz);
-            let _ = borg_log::append_entry(
-                &borg_log::log_path(config),
-                &BorgLogEntry {
+            let _ = ledger::append_entry(
+                &ledger::ledger_path(config),
+                &LedgerEntry {
                     date: now.format("%Y-%m-%d").to_string(),
                     time: now.format("%H:%M").to_string(),
                     method,
-                    status: BorgLogStatus::Failed,
+                    status: LedgerStatus::Failed,
                     title: None,
                     source: canonical.clone(),
                     original: url.to_string(),
@@ -93,16 +93,16 @@ async fn process_url_inner(
     let log_time = now.format("%H:%M").to_string();
 
     // Dedup check (skip if --force)
-    let log_file = borg_log::log_path(config);
-    if !force && let Some(original_date) = borg_log::check_duplicate(&log_file, &canonical)? {
+    let ledger_file = ledger::ledger_path(config);
+    if !force && let Some(original_date) = ledger::check_duplicate(&ledger_file, &canonical)? {
         log::info!("Duplicate URL: {canonical} (first ingested {original_date})");
-        borg_log::append_entry(
-            &log_file,
-            &BorgLogEntry {
+        ledger::append_entry(
+            &ledger_file,
+            &LedgerEntry {
                 date: log_date,
                 time: log_time,
                 method,
-                status: BorgLogStatus::Skipped,
+                status: LedgerStatus::Skipped,
                 title: None,
                 source: canonical.clone(),
                 original: url.to_string(),
@@ -229,14 +229,14 @@ async fn process_url_inner(
 
     log::info!("Wrote note: {} (folder: {})", note_path.display(), folder);
 
-    // Log success to Borg Log
-    borg_log::append_entry(
-        &log_file,
-        &BorgLogEntry {
+    // Log success to Borg Ledger
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
             date: log_date,
             time: log_time,
             method,
-            status: BorgLogStatus::Completed,
+            status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: canonical.clone(),
             original: url.to_string(),

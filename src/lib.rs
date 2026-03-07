@@ -2,7 +2,6 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
-pub mod borg_log;
 pub mod cli;
 pub mod config;
 pub mod dashboard;
@@ -12,6 +11,7 @@ pub mod fabric;
 pub mod health;
 pub mod hygiene;
 pub mod jina;
+pub mod ledger;
 pub mod logging;
 pub mod markdown;
 pub mod migrate;
@@ -59,8 +59,8 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     log::debug!("LLM provider: {}, model: {}", config.llm.provider, config.llm.model);
 
     // Ensure vault system files exist on startup
-    if let Err(e) = borg_log::ensure_log_exists(&borg_log::log_path(&config)) {
-        log::warn!("Failed to ensure Borg Log exists: {e:#}");
+    if let Err(e) = ledger::ensure_ledger_exists(&ledger::ledger_path(&config)) {
+        log::warn!("Failed to ensure Borg Ledger exists: {e:#}");
     }
     if let Err(e) = dashboard::ensure_dashboard_exists(&dashboard::dashboard_path(&config)) {
         log::warn!("Failed to ensure Borg Dashboard exists: {e:#}");

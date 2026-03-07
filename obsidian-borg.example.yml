@@ -88,7 +88,7 @@ migration:
     tags: normalize          # inline `#tag, #tag` → YAML list, strip #
 
   title_fallback: true       # derive title from H1 heading or filename if missing
-  seed_borg_log: true        # backfill Borg Log with existing notes' URLs
+  seed_borg_log: true        # backfill Borg Ledger with existing notes' URLs
 
   skip_folders:
     - "⚙️ System"
