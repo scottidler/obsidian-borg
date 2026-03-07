@@ -2,6 +2,7 @@ use chrono::Utc;
 use chrono_tz::Tz;
 
 use crate::config::FrontmatterConfig;
+use crate::types::IngestMethod;
 
 pub struct NoteContent {
     pub title: String,
@@ -10,6 +11,7 @@ pub struct NoteContent {
     pub summary: String,
     pub content_type: ContentType,
     pub embed_code: Option<String>,
+    pub method: Option<IngestMethod>,
 }
 
 pub enum ContentType {
@@ -45,10 +47,16 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
     };
 
     let mut fm = format!(
-        "---\ntitle: \"{}\"\ndate: {date}\nday: {day}\ntime: \"{time}\"\nsource: \"{}\"\ntype: {type_field}\ntags:\n{tags_yaml}\n",
+        "---\ntitle: \"{}\"\ndate: {date}\nday: {day}\ntime: \"{time}\"\nsource: \"{}\"\ntype: {type_field}\n",
         escape_yaml_string(&note.title),
         note.source_url,
     );
+
+    if let Some(method) = &note.method {
+        fm.push_str(&format!("method: {method}\n"));
+    }
+
+    fm.push_str(&format!("tags:\n{tags_yaml}\n"));
 
     if !frontmatter_config.default_author.is_empty() {
         fm.push_str(&format!(
@@ -125,6 +133,7 @@ mod tests {
             summary: "This is a summary.".to_string(),
             content_type: ContentType::Article,
             embed_code: None,
+            method: None,
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("title: \"Test Article\""));
@@ -149,9 +158,11 @@ mod tests {
                 duration_secs: 600.0,
             },
             embed_code: Some(r#"<iframe width="854" height="480" src="https://www.youtube.com/embed/abc" frameborder="0" allowfullscreen></iframe>"#.to_string()),
+            method: Some(IngestMethod::Telegram),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: youtube"));
+        assert!(rendered.contains("method: telegram"));
         assert!(rendered.contains("uploader: \"TechChannel\""));
         assert!(rendered.contains("duration_min: 10"));
         assert!(rendered.contains("iframe"));
@@ -172,6 +183,7 @@ mod tests {
             summary: String::new(),
             content_type: ContentType::Article,
             embed_code: None,
+            method: None,
         };
         let rendered = render_note(&note, &config);
         assert!(rendered.contains("  - ai"));

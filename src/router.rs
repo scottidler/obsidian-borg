@@ -106,6 +106,9 @@ pub fn format_reply(result: &IngestResult, url: &str) -> String {
                 .unwrap_or_default();
             format!("Saved: {title}{elapsed}{tags}{folder_info}")
         }
+        IngestStatus::Duplicate { original_date } => {
+            format!("Duplicate{elapsed}: already ingested on {original_date}\nURL: {url}")
+        }
         IngestStatus::Failed { reason } => {
             format!("Failed{elapsed}: {reason}\nURL: {url}")
         }
@@ -274,7 +277,7 @@ mod tests {
             title: Some("Test Article".to_string()),
             tags: vec!["ai".to_string(), "tech".to_string()],
             elapsed_secs: Some(4.56),
-            folder: None,
+            ..Default::default()
         };
         let reply = format_reply(&result, "https://example.com");
         assert_eq!(reply, "Saved: Test Article (4.6s)\nTags: #ai, #tech");
@@ -287,8 +290,8 @@ mod tests {
             note_path: Some("/vault/Tech/Test.md".to_string()),
             title: Some("Test".to_string()),
             tags: vec![],
-            elapsed_secs: None,
             folder: Some("Tech/AI-LLM".to_string()),
+            ..Default::default()
         };
         let reply = format_reply(&result, "https://example.com");
         assert_eq!(reply, "Saved: Test\nFolder: Tech/AI-LLM");
@@ -298,11 +301,9 @@ mod tests {
     fn test_format_reply_completed_no_tags() {
         let result = IngestResult {
             status: IngestStatus::Completed,
-            note_path: None,
             title: Some("Test".to_string()),
             tags: vec![],
-            elapsed_secs: None,
-            folder: None,
+            ..Default::default()
         };
         let reply = format_reply(&result, "https://example.com");
         assert_eq!(reply, "Saved: Test");

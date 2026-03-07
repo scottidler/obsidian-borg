@@ -1,4 +1,27 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IngestMethod {
+    Telegram,
+    Discord,
+    Http,
+    Clipboard,
+    Cli,
+}
+
+impl fmt::Display for IngestMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Telegram => write!(f, "telegram"),
+            Self::Discord => write!(f, "discord"),
+            Self::Http => write!(f, "http"),
+            Self::Clipboard => write!(f, "clipboard"),
+            Self::Cli => write!(f, "cli"),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranscriptionRequest {
@@ -44,6 +67,10 @@ pub struct IngestResult {
     pub elapsed_secs: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<IngestMethod>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_url: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -51,6 +78,9 @@ pub enum IngestStatus {
     #[default]
     Queued,
     Completed,
+    Duplicate {
+        original_date: String,
+    },
     Failed {
         reason: String,
     },

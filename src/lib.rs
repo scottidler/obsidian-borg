@@ -167,6 +167,12 @@ pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>, 
                 send_notification("Saved", title);
             }
         }
+        types::IngestStatus::Duplicate { original_date } => {
+            println!("Duplicate: already ingested on {original_date}");
+            if notify {
+                send_notification("Duplicate", &format!("Already ingested on {original_date}"));
+            }
+        }
         types::IngestStatus::Failed { reason } => {
             if notify {
                 send_notification("Failed", reason);
@@ -196,21 +202,9 @@ fn send_notification(summary: &str, body: &str) {
 
 pub async fn run_hotkey(opts: cli::HotkeyOpts, config: &Config) -> Result<()> {
     // CLI args override config; if CLI has default values, fall back to config
-    let host = if opts.host == "localhost" {
-        config.hotkey.host.clone()
-    } else {
-        opts.host
-    };
-    let port = if opts.port == 8181 {
-        config.hotkey.port
-    } else {
-        opts.port
-    };
-    let key = if opts.key == "<Ctrl><Shift>b" {
-        config.hotkey.key.clone()
-    } else {
-        opts.key
-    };
+    let host = if opts.host == "localhost" { config.hotkey.host.clone() } else { opts.host };
+    let port = if opts.port == 8181 { config.hotkey.port } else { opts.port };
+    let key = if opts.key == "<Ctrl><Shift>b" { config.hotkey.key.clone() } else { opts.key };
 
     if opts.install {
         install_hotkey(&host, port, &key).await
@@ -503,10 +497,7 @@ async fn install_hotkey(host: &str, port: u16, key: &str) -> Result<()> {
     if cfg!(target_os = "linux") {
         install_gnome_keybinding(&command, key)?;
     } else {
-        println!(
-            "Bind this command to {} in your OS settings:\n  {}",
-            key, command
-        );
+        println!("Bind this command to {} in your OS settings:\n  {}", key, command);
         return Ok(());
     }
 

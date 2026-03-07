@@ -5,15 +5,21 @@ use crate::jina;
 use crate::markdown::{self, ContentType, NoteContent};
 use crate::router;
 use crate::transcription::TranscriptionClient;
-use crate::types::{AudioFormat, IngestResult, IngestStatus};
+use crate::types::{AudioFormat, IngestMethod, IngestResult, IngestStatus};
 use crate::youtube;
 use eyre::{Context, Result};
 use std::path::PathBuf;
 use std::time::Instant;
 
-pub async fn process_url(url: &str, tags: Vec<String>, config: &Config) -> IngestResult {
+pub async fn process_url(
+    url: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    force: bool,
+    config: &Config,
+) -> IngestResult {
     let start = Instant::now();
-    match process_url_inner(url, tags, config).await {
+    match process_url_inner(url, tags, method, force, config).await {
         Ok(mut result) => {
             let elapsed = start.elapsed();
             log::info!("Pipeline completed for {url} in {elapsed:.2?}");
@@ -31,12 +37,20 @@ pub async fn process_url(url: &str, tags: Vec<String>, config: &Config) -> Inges
                 tags: vec![],
                 elapsed_secs: Some(elapsed.as_secs_f64()),
                 folder: None,
+                method: Some(method),
+                canonical_url: None,
             }
         }
     }
 }
 
-async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Result<IngestResult> {
+async fn process_url_inner(
+    url: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    _force: bool,
+    config: &Config,
+) -> Result<IngestResult> {
     log::debug!("Processing URL: {url}");
 
     // Normalize URL (clean + canonicalize) before classification
@@ -135,6 +149,7 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
         summary,
         content_type,
         embed_code,
+        method: Some(method),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -161,6 +176,8 @@ async fn process_url_inner(url: &str, tags: Vec<String>, config: &Config) -> Res
         tags: all_tags,
         elapsed_secs: None,
         folder: Some(folder),
+        method: Some(method),
+        canonical_url: Some(canonical),
     })
 }
 

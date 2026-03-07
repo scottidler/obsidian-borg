@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::health::HealthResponse;
 use crate::pipeline;
-use crate::types::{IngestRequest, IngestResult, IngestStatus};
+use crate::types::{IngestMethod, IngestRequest, IngestResult, IngestStatus};
 
 pub async fn health() -> Json<HealthResponse> {
     crate::health::health_handler("obsidian-borg", env!("GIT_DESCRIBE")).await
@@ -16,7 +16,7 @@ pub async fn ingest(State(config): State<Arc<Config>>, Json(request): Json<Inges
 
     let tags = request.tags.unwrap_or_default();
 
-    let result = pipeline::process_url(&request.url, tags, &config).await;
+    let result = pipeline::process_url(&request.url, tags, IngestMethod::Http, false, &config).await;
 
     match &result.status {
         IngestStatus::Failed { reason } => {
@@ -24,6 +24,9 @@ pub async fn ingest(State(config): State<Arc<Config>>, Json(request): Json<Inges
         }
         IngestStatus::Completed => {
             log::info!("Ingest completed for {}", request.url);
+        }
+        IngestStatus::Duplicate { .. } => {
+            log::info!("Duplicate URL skipped for {}", request.url);
         }
         IngestStatus::Queued => {}
     }
