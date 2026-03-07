@@ -14,6 +14,7 @@ pub mod hygiene;
 pub mod jina;
 pub mod logging;
 pub mod markdown;
+pub mod migrate;
 pub mod pipeline;
 pub mod router;
 pub mod routes;

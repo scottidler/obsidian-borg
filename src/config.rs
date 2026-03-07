@@ -176,8 +176,19 @@ pub struct Config {
     pub routing: RoutingConfig,
     pub hotkey: HotkeyConfig,
     pub canonicalization: CanonicalConfig,
+    pub migration: MigrationConfig,
     pub log_level: Option<String>,
     pub debug: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MigrationConfig {
+    pub field_renames: std::collections::HashMap<String, String>,
+    pub field_transforms: std::collections::HashMap<String, String>,
+    pub title_fallback: bool,
+    pub seed_borg_log: bool,
+    pub skip_folders: Vec<String>,
 }
 
 fn default_links() -> Vec<LinkConfig> {

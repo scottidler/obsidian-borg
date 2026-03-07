@@ -49,6 +49,15 @@ pub enum Command {
     },
     /// Install/uninstall a keyboard shortcut to ingest URLs from clipboard
     Hotkey(HotkeyOpts),
+    /// Migrate vault frontmatter to current schema
+    Migrate {
+        /// Preview changes without writing (default)
+        #[arg(long)]
+        dry_run: bool,
+        /// Apply changes to vault files
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
