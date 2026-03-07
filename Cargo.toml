@@ -1,6 +1,6 @@
 [package]
 name = "obsidian-borg"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 build = "build.rs"
 
@@ -25,6 +25,9 @@ tower = "0.5.3"
 url = "2.5.8"
 shellexpand = "3.1.2"
 tower-http = { version = "0.6.8", features = ["cors"] }
+
+arboard = "3"
+notify-rust = "4"
 
 [dependencies.serenity]
 version = "0.12"

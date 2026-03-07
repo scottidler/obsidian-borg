@@ -76,6 +76,7 @@ pub struct Config {
     pub fabric: FabricConfig,
     pub frontmatter: FrontmatterConfig,
     pub routing: RoutingConfig,
+    pub hotkey: HotkeyConfig,
     pub log_level: Option<String>,
     pub debug: bool,
 }
@@ -243,6 +244,24 @@ pub struct LlmConfig {
     pub model: String,
     #[serde(alias = "api_key_env")]
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct HotkeyConfig {
+    pub host: String,
+    pub port: u16,
+    pub key: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            host: "localhost".to_string(),
+            port: 8181,
+            key: "<Ctrl><Shift>b".to_string(),
+        }
+    }
 }
 
 impl Default for ServerConfig {

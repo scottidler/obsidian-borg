@@ -110,10 +110,33 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>) -> Result<()> {
-    let host = &config.server.host;
-    let port = config.server.port;
+pub fn resolve_ingest_url(url: Option<String>, clipboard: bool) -> Result<String> {
+    if let Some(url) = url {
+        return Ok(url);
+    }
+    if clipboard {
+        let mut board = arboard::Clipboard::new().context("Failed to access clipboard")?;
+        let text = board.get_text().context("Clipboard is empty or not text")?;
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            eyre::bail!("Clipboard is empty");
+        }
+        if !text.starts_with("http://") && !text.starts_with("https://") {
+            eyre::bail!("Clipboard content is not a URL: {text}");
+        }
+        return Ok(text);
+    }
+    eyre::bail!("No URL provided. Use a URL argument or --clipboard")
+}
+
+pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>, notify: bool) -> Result<()> {
+    let host = &config.hotkey.host;
+    let port = config.hotkey.port;
     let endpoint = format!("http://{host}:{port}/ingest");
+
+    if notify {
+        send_notification("Ingesting...", &url);
+    }
 
     let body = serde_json::json!({
         "url": url,
@@ -122,11 +145,15 @@ pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>) 
 
     let client = reqwest::Client::new();
     let response = client.post(&endpoint).json(&body).send().await.map_err(|e| {
-        if e.is_connect() {
-            eyre::eyre!("cannot reach obsidian-borg at http://{host}:{port} — is the daemon running?")
+        let msg = if e.is_connect() {
+            format!("cannot reach obsidian-borg at http://{host}:{port} — is the daemon running?")
         } else {
-            eyre::eyre!("{e}")
+            format!("{e}")
+        };
+        if notify {
+            send_notification("Error", &msg);
         }
+        eyre::eyre!("{msg}")
     })?;
 
     let result: types::IngestResult = response.json().await.context("Failed to parse response from daemon")?;
@@ -136,17 +163,63 @@ pub async fn run_ingest(config: Config, url: String, tags: Option<Vec<String>>) 
             let title = result.title.as_deref().unwrap_or("Untitled");
             let path = result.note_path.as_deref().unwrap_or("unknown");
             println!("Captured: \"{title}\" -> {path}");
+            if notify {
+                send_notification("Saved", title);
+            }
         }
         types::IngestStatus::Failed { reason } => {
+            if notify {
+                send_notification("Failed", reason);
+            }
             eprintln!("Error: {reason}");
             std::process::exit(1);
         }
         types::IngestStatus::Queued => {
             println!("Queued for processing.");
+            if notify {
+                send_notification("Queued", &url);
+            }
         }
     }
 
     Ok(())
+}
+
+fn send_notification(summary: &str, body: &str) {
+    let _ = notify_rust::Notification::new()
+        .appname("obsidian-borg")
+        .summary(&format!("obsidian-borg: {summary}"))
+        .body(body)
+        .timeout(notify_rust::Timeout::Milliseconds(5000))
+        .show();
+}
+
+pub async fn run_hotkey(opts: cli::HotkeyOpts, config: &Config) -> Result<()> {
+    // CLI args override config; if CLI has default values, fall back to config
+    let host = if opts.host == "localhost" {
+        config.hotkey.host.clone()
+    } else {
+        opts.host
+    };
+    let port = if opts.port == 8181 {
+        config.hotkey.port
+    } else {
+        opts.port
+    };
+    let key = if opts.key == "<Ctrl><Shift>b" {
+        config.hotkey.key.clone()
+    } else {
+        opts.key
+    };
+
+    if opts.install {
+        install_hotkey(&host, port, &key).await
+    } else if opts.uninstall {
+        uninstall_hotkey().await
+    } else {
+        eprintln!("No hotkey action specified. See: obsidian-borg hotkey --help");
+        Ok(())
+    }
 }
 
 pub async fn run_daemon(config: Config, verbose: bool, opts: cli::DaemonOpts) -> Result<()> {
@@ -420,6 +493,134 @@ async fn uninstall_launchd() -> Result<()> {
     Ok(())
 }
 
+const GNOME_KEYBINDINGS_SCHEMA: &str = "org.gnome.settings-daemon.plugins.media-keys";
+const GNOME_KEYBINDING_PATH: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/obsidian-borg/";
+
+async fn install_hotkey(host: &str, port: u16, key: &str) -> Result<()> {
+    let exe_path = std::env::current_exe().context("Failed to detect binary path")?;
+    let command = format!("{} ingest --clipboard", exe_path.display());
+
+    if cfg!(target_os = "linux") {
+        install_gnome_keybinding(&command, key)?;
+    } else {
+        println!(
+            "Bind this command to {} in your OS settings:\n  {}",
+            key, command
+        );
+        return Ok(());
+    }
+
+    println!("Hotkey installed: {key} -> obsidian-borg ingest --clipboard");
+    println!("Daemon target: http://{host}:{port}/ingest (from config)");
+    Ok(())
+}
+
+fn install_gnome_keybinding(command: &str, key: &str) -> Result<()> {
+    // Get current custom keybinding paths
+    let output = std::process::Command::new("gsettings")
+        .args(["get", GNOME_KEYBINDINGS_SCHEMA, "custom-keybindings"])
+        .output()
+        .context("Failed to run gsettings — is GNOME available?")?;
+
+    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Parse current list and add our path if not present
+    let new_list = if current == "@as []" || current.is_empty() {
+        format!("['{}']", GNOME_KEYBINDING_PATH)
+    } else if current.contains(GNOME_KEYBINDING_PATH) {
+        current.clone()
+    } else {
+        // Insert before closing bracket
+        let trimmed = current.trim_end_matches(']').trim_end_matches(", ");
+        format!("{}, '{}']", trimmed, GNOME_KEYBINDING_PATH)
+    };
+
+    // Update the list
+    std::process::Command::new("gsettings")
+        .args(["set", GNOME_KEYBINDINGS_SCHEMA, "custom-keybindings", &new_list])
+        .status()
+        .context("Failed to update custom-keybindings list")?;
+
+    // Set the keybinding properties
+    let schema = format!(
+        "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{}",
+        GNOME_KEYBINDING_PATH
+    );
+
+    for (prop, val) in [("name", "obsidian-borg"), ("command", command), ("binding", key)] {
+        let status = std::process::Command::new("gsettings")
+            .args(["set", &schema, prop, val])
+            .status()
+            .context(format!("Failed to set keybinding {prop}"))?;
+        if !status.success() {
+            eyre::bail!("gsettings set {prop} failed");
+        }
+    }
+
+    println!("Registered GNOME keybinding: {key} -> {command}");
+    Ok(())
+}
+
+async fn uninstall_hotkey() -> Result<()> {
+    if cfg!(target_os = "linux") {
+        uninstall_gnome_keybinding()?;
+    }
+
+    println!("Hotkey uninstalled.");
+    Ok(())
+}
+
+fn uninstall_gnome_keybinding() -> Result<()> {
+    // Remove our path from the custom keybindings list
+    let output = std::process::Command::new("gsettings")
+        .args(["get", GNOME_KEYBINDINGS_SCHEMA, "custom-keybindings"])
+        .output()
+        .context("Failed to run gsettings")?;
+
+    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if current.contains(GNOME_KEYBINDING_PATH) {
+        // Remove our entry from the list
+        let new_list = current
+            .replace(&format!("'{}'", GNOME_KEYBINDING_PATH), "")
+            .replace(", ,", ",")
+            .replace("[,", "[")
+            .replace(",]", "]")
+            .replace("[, ", "[")
+            .replace(", ]", "]");
+
+        // Normalize empty list
+        let new_list = if new_list.trim() == "[]" || new_list.trim() == "[' ']" {
+            "@as []".to_string()
+        } else {
+            new_list
+        };
+
+        std::process::Command::new("gsettings")
+            .args(["set", GNOME_KEYBINDINGS_SCHEMA, "custom-keybindings", &new_list])
+            .status()
+            .context("Failed to update custom-keybindings list")?;
+
+        // Reset the keybinding properties
+        let schema = format!(
+            "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{}",
+            GNOME_KEYBINDING_PATH
+        );
+
+        for prop in &["name", "command", "binding"] {
+            let _ = std::process::Command::new("gsettings")
+                .args(["reset", &schema, prop])
+                .status();
+        }
+
+        println!("Removed GNOME keybinding");
+    } else {
+        println!("No GNOME keybinding found to remove");
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,13 +688,14 @@ mod tests {
     async fn test_run_ingest_connection_refused() {
         // Use a port that's almost certainly not listening
         let config = Config {
-            server: config::ServerConfig {
+            hotkey: config::HotkeyConfig {
                 host: "127.0.0.1".to_string(),
                 port: 19999,
+                ..config::HotkeyConfig::default()
             },
             ..Config::default()
         };
-        let result = run_ingest(config, "https://example.com".to_string(), None).await;
+        let result = run_ingest(config, "https://example.com".to_string(), None, false).await;
         assert!(result.is_err());
         let err = format!("{}", result.expect_err("expected error"));
         assert!(

@@ -27,6 +27,11 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Command::Daemon(opts)) => obsidian_borg::run_daemon(config, cli.verbose, opts).await,
-        Some(Command::Ingest { url, tags }) => obsidian_borg::run_ingest(config, url, tags).await,
+        Some(Command::Ingest { url, clipboard, tags }) => {
+            let resolved_url = obsidian_borg::resolve_ingest_url(url, clipboard)?;
+            let result = obsidian_borg::run_ingest(config, resolved_url, tags, clipboard).await;
+            result
+        }
+        Some(Command::Hotkey(opts)) => obsidian_borg::run_hotkey(opts, &config).await,
     }
 }

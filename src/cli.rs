@@ -35,12 +35,40 @@ pub enum Command {
     Daemon(DaemonOpts),
     /// Send a URL to the running daemon for ingestion
     Ingest {
-        /// URL to ingest
-        url: String,
+        /// URL to ingest (omit when using --clipboard)
+        url: Option<String>,
+        /// Read URL from system clipboard
+        #[arg(long)]
+        clipboard: bool,
         /// Comma-separated tags
         #[arg(short, long, value_delimiter = ',')]
         tags: Option<Vec<String>>,
     },
+    /// Install/uninstall a keyboard shortcut to ingest URLs from clipboard
+    Hotkey(HotkeyOpts),
+}
+
+#[derive(Parser, Debug)]
+pub struct HotkeyOpts {
+    /// Install the keyboard shortcut
+    #[arg(long)]
+    pub install: bool,
+
+    /// Uninstall the keyboard shortcut
+    #[arg(long)]
+    pub uninstall: bool,
+
+    /// Daemon host to send URLs to (default: localhost)
+    #[arg(long, default_value = "localhost")]
+    pub host: String,
+
+    /// Daemon port (default: 8181)
+    #[arg(long, default_value_t = 8181)]
+    pub port: u16,
+
+    /// Key binding in GNOME format (default: <Ctrl><Shift>b)
+    #[arg(long, default_value = "<Ctrl><Shift>b")]
+    pub key: String,
 }
 
 #[derive(Parser, Debug)]
@@ -263,8 +291,9 @@ mod tests {
     fn test_ingest_subcommand() {
         let cli = Cli::try_parse_from(["obsidian-borg", "ingest", "https://example.com"]).expect("parse");
         match cli.command {
-            Some(Command::Ingest { url, tags }) => {
-                assert_eq!(url, "https://example.com");
+            Some(Command::Ingest { url, clipboard, tags }) => {
+                assert_eq!(url, Some("https://example.com".to_string()));
+                assert!(!clipboard);
                 assert!(tags.is_none());
             }
             _ => panic!("expected Ingest"),
@@ -276,11 +305,62 @@ mod tests {
         let cli =
             Cli::try_parse_from(["obsidian-borg", "ingest", "https://example.com", "-t", "ai,rust"]).expect("parse");
         match cli.command {
-            Some(Command::Ingest { url, tags }) => {
-                assert_eq!(url, "https://example.com");
+            Some(Command::Ingest { url, tags, .. }) => {
+                assert_eq!(url, Some("https://example.com".to_string()));
                 assert_eq!(tags, Some(vec!["ai".to_string(), "rust".to_string()]));
             }
             _ => panic!("expected Ingest"),
+        }
+    }
+
+    #[test]
+    fn test_hotkey_install() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "hotkey", "--install"]).expect("parse");
+        match cli.command {
+            Some(Command::Hotkey(opts)) => {
+                assert!(opts.install);
+                assert!(!opts.uninstall);
+                assert_eq!(opts.host, "localhost");
+                assert_eq!(opts.port, 8181);
+                assert_eq!(opts.key, "<Ctrl><Shift>b");
+            }
+            _ => panic!("expected Hotkey"),
+        }
+    }
+
+    #[test]
+    fn test_hotkey_uninstall() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "hotkey", "--uninstall"]).expect("parse");
+        match cli.command {
+            Some(Command::Hotkey(opts)) => assert!(opts.uninstall),
+            _ => panic!("expected Hotkey"),
+        }
+    }
+
+    #[test]
+    fn test_hotkey_custom_host_and_port() {
+        let cli =
+            Cli::try_parse_from(["obsidian-borg", "hotkey", "--install", "--host", "desk.lan", "--port", "9090"])
+                .expect("parse");
+        match cli.command {
+            Some(Command::Hotkey(opts)) => {
+                assert!(opts.install);
+                assert_eq!(opts.host, "desk.lan");
+                assert_eq!(opts.port, 9090);
+            }
+            _ => panic!("expected Hotkey"),
+        }
+    }
+
+    #[test]
+    fn test_hotkey_custom_key() {
+        let cli =
+            Cli::try_parse_from(["obsidian-borg", "hotkey", "--install", "--key", "<Super>b"]).expect("parse");
+        match cli.command {
+            Some(Command::Hotkey(opts)) => {
+                assert_eq!(opts.key, "<Super>b");
+            }
+            _ => panic!("expected Hotkey"),
         }
     }
 
