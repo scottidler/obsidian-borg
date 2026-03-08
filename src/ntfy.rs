@@ -1,0 +1,230 @@
+use crate::config::Config;
+use crate::pipeline;
+use crate::router::extract_url_from_text;
+use crate::types::IngestMethod;
+use eyre::Result;
+use serde::Deserialize;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
+use tokio_stream::StreamExt;
+
+#[derive(Debug, Deserialize)]
+struct NtfyEvent {
+    id: String,
+    event: String,
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonBody {
+    url: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    force: bool,
+}
+
+fn parse_message(message: &str) -> Option<(String, Vec<String>, bool)> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // JSON body: {"url": "...", "tags": [...], "force": true}
+    if trimmed.starts_with('{')
+        && let Ok(body) = serde_json::from_str::<JsonBody>(trimmed)
+    {
+        return Some((body.url, body.tags, body.force));
+    }
+
+    // Plain text: extract first URL
+    extract_url_from_text(trimmed).map(|url| (url, vec![], false))
+}
+
+struct ExponentialBackoff {
+    attempt: u32,
+    base: Duration,
+    cap: Duration,
+}
+
+impl ExponentialBackoff {
+    fn new() -> Self {
+        Self {
+            attempt: 0,
+            base: Duration::from_secs(1),
+            cap: Duration::from_secs(30),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.attempt = 0;
+    }
+
+    async fn wait(&mut self) {
+        let delay = self.base * 2u32.saturating_pow(self.attempt);
+        let delay = delay.min(self.cap);
+        self.attempt = self.attempt.saturating_add(1);
+        log::info!("ntfy: reconnecting in {delay:?} (attempt {})", self.attempt);
+        tokio::time::sleep(delay).await;
+    }
+}
+
+pub async fn run(server: String, topic: String, token: Option<String>, config: Arc<Config>) -> Result<()> {
+    let mut last_event_id: Option<String> = None;
+    let mut backoff = ExponentialBackoff::new();
+
+    loop {
+        let mut url = format!("{server}/{topic}/json");
+        if let Some(ref since) = last_event_id {
+            url = format!("{url}?since={since}");
+        }
+
+        log::info!("ntfy: connecting to {url}");
+
+        let mut req = reqwest::Client::new().get(&url);
+        if let Some(ref token) = token {
+            req = req.bearer_auth(token);
+        }
+
+        let response = match req.send().await {
+            Ok(resp) if resp.status().is_success() => resp,
+            Ok(resp) => {
+                log::warn!("ntfy: server returned {}", resp.status());
+                backoff.wait().await;
+                continue;
+            }
+            Err(e) => {
+                log::warn!("ntfy: connection failed: {e}");
+                backoff.wait().await;
+                continue;
+            }
+        };
+
+        log::info!("ntfy: connected to {topic}");
+
+        let stream = response.bytes_stream();
+        let reader = tokio_util::io::StreamReader::new(stream.map(|r| r.map_err(std::io::Error::other)));
+        let mut lines = tokio::io::BufReader::new(reader).lines();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let event: NtfyEvent = match serde_json::from_str(&line) {
+                Ok(e) => e,
+                Err(e) => {
+                    log::warn!("ntfy: failed to parse event: {e}");
+                    continue;
+                }
+            };
+
+            last_event_id = Some(event.id.clone());
+
+            if event.event != "message" {
+                log::debug!("ntfy: skipping event type '{}'", event.event);
+                continue;
+            }
+
+            backoff.reset();
+
+            let Some((url, tags, force)) = parse_message(&event.message) else {
+                log::info!("ntfy: no URL found in message: {:?}", event.message);
+                continue;
+            };
+
+            log::info!("ntfy: processing URL {url}");
+            let cfg = config.clone();
+            tokio::spawn(async move {
+                let result = pipeline::process_url(&url, tags, IngestMethod::Ntfy, force, &cfg).await;
+                log::info!("ntfy: pipeline result for {url}: {:?}", result.status);
+            });
+        }
+
+        log::warn!("ntfy: stream ended, will reconnect");
+        backoff.wait().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_plain_url() {
+        let result = parse_message("https://youtube.com/watch?v=abc123");
+        assert_eq!(
+            result,
+            Some(("https://youtube.com/watch?v=abc123".to_string(), vec![], false))
+        );
+    }
+
+    #[test]
+    fn test_parse_url_with_surrounding_text() {
+        let result = parse_message("Check out this video: https://youtube.com/watch?v=abc123");
+        assert_eq!(
+            result,
+            Some(("https://youtube.com/watch?v=abc123".to_string(), vec![], false))
+        );
+    }
+
+    #[test]
+    fn test_parse_google_discover_format() {
+        let result = parse_message("Article Title\nhttps://example.com/article");
+        assert_eq!(result, Some(("https://example.com/article".to_string(), vec![], false)));
+    }
+
+    #[test]
+    fn test_parse_json_body() {
+        let result = parse_message(r#"{"url": "https://example.com", "tags": ["ai", "rust"], "force": true}"#);
+        assert_eq!(
+            result,
+            Some((
+                "https://example.com".to_string(),
+                vec!["ai".to_string(), "rust".to_string()],
+                true
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_json_body_minimal() {
+        let result = parse_message(r#"{"url": "https://example.com"}"#);
+        assert_eq!(result, Some(("https://example.com".to_string(), vec![], false)));
+    }
+
+    #[test]
+    fn test_parse_empty_message() {
+        assert_eq!(parse_message(""), None);
+        assert_eq!(parse_message("  "), None);
+    }
+
+    #[test]
+    fn test_parse_no_url() {
+        assert_eq!(parse_message("just some text without urls"), None);
+    }
+
+    #[test]
+    fn test_parse_invalid_json_falls_through_to_url_extraction() {
+        let result = parse_message(r#"{"not_valid_json": }"#);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_exponential_backoff_cap() {
+        let backoff = ExponentialBackoff::new();
+        // Verify cap is 30 seconds
+        assert_eq!(backoff.cap, Duration::from_secs(30));
+        assert_eq!(backoff.base, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_exponential_backoff_reset() {
+        let mut backoff = ExponentialBackoff::new();
+        backoff.attempt = 5;
+        backoff.reset();
+        assert_eq!(backoff.attempt, 0);
+    }
+}

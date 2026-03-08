@@ -9,6 +9,7 @@ pub enum IngestMethod {
     Http,
     Clipboard,
     Cli,
+    Ntfy,
 }
 
 impl fmt::Display for IngestMethod {
@@ -19,6 +20,7 @@ impl fmt::Display for IngestMethod {
             Self::Http => write!(f, "http"),
             Self::Clipboard => write!(f, "clipboard"),
             Self::Cli => write!(f, "cli"),
+            Self::Ntfy => write!(f, "ntfy"),
         }
     }
 }

@@ -28,6 +28,12 @@ llm:
 #   bot_token: "~/.config/discord/api-token"   # file path or env var name
 #   channel_id: 1234567890                      # only listen on this channel
 
+# Optional: uncomment to enable ntfy.sh mobile ingestion
+# ntfy:
+#   topic: "obsidian-borg-CHANGE-ME"           # unique topic name (acts as shared secret)
+#   server: "https://ntfy.sh"                  # optional, default: https://ntfy.sh
+#   token: "~/.config/ntfy/token"              # optional, file path or env var name
+
 # ---------------------------------------------------------------------------
 # URL Canonicalization
 # ---------------------------------------------------------------------------

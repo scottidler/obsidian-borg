@@ -15,6 +15,7 @@ pub mod ledger;
 pub mod logging;
 pub mod markdown;
 pub mod migrate;
+pub mod ntfy;
 pub mod pipeline;
 pub mod router;
 pub mod routes;
@@ -111,6 +112,20 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
                 eprintln!("{} discord bot skipped (token not available)", "-->".yellow());
             }
         }
+    }
+
+    // ntfy subscriber (config-driven)
+    if let Some(ntfy_config) = &config.ntfy {
+        let server = ntfy_config.server.clone();
+        let topic = ntfy_config.topic.clone();
+        let token = ntfy_config.token.as_ref().and_then(|t| config::resolve_secret(t).ok());
+        let cfg = config.clone();
+        tasks.spawn(async move { ntfy::run(server, topic, token, cfg).await });
+        println!(
+            "{} ntfy subscriber active (topic: {})",
+            "-->".green(),
+            ntfy_config.topic
+        );
     }
 
     // If any task exits (error or completion), propagate
@@ -706,7 +721,15 @@ mod tests {
             },
             ..Config::default()
         };
-        let result = run_ingest(config, "https://example.com".to_string(), None, false, false, types::IngestMethod::Cli).await;
+        let result = run_ingest(
+            config,
+            "https://example.com".to_string(),
+            None,
+            false,
+            false,
+            types::IngestMethod::Cli,
+        )
+        .await;
         assert!(result.is_err());
         let err = format!("{}", result.expect_err("expected error"));
         assert!(

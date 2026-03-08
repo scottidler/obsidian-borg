@@ -169,6 +169,7 @@ pub struct Config {
     pub llm: LlmConfig,
     pub telegram: Option<TelegramConfig>,
     pub discord: Option<DiscordConfig>,
+    pub ntfy: Option<NtfyConfig>,
     #[serde(default = "default_links")]
     pub links: Vec<LinkConfig>,
     pub fabric: FabricConfig,
@@ -316,6 +317,18 @@ pub struct DiscordConfig {
     #[serde(alias = "bot_token_env")]
     pub bot_token: String,
     pub channel_id: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NtfyConfig {
+    pub topic: String,
+    #[serde(default = "default_ntfy_server")]
+    pub server: String,
+    pub token: Option<String>,
+}
+
+fn default_ntfy_server() -> String {
+    "https://ntfy.sh".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize)]

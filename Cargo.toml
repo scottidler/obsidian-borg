@@ -14,7 +14,7 @@ dirs = "6.0.0"
 env_logger = "0.11.9"
 eyre = "0.6.12"
 log = "0.4.29"
-reqwest = { version = "0.13.2", features = ["json", "multipart"] }
+reqwest = { version = "0.13.2", features = ["json", "multipart", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9.34"
@@ -29,6 +29,8 @@ tower-http = { version = "0.6.8", features = ["cors"] }
 arboard = "3"
 notify-rust = "4"
 fs2 = "0.4.3"
+tokio-stream = "0.1.18"
+tokio-util = { version = "0.7.18", features = ["io"] }
 
 [dependencies.serenity]
 version = "0.12"
