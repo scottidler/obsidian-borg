@@ -20,5 +20,6 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Signed Firefox extension artifacts
+# Firefox extension build artifacts
 web-ext-artifacts/
+.amo-upload-uuid
