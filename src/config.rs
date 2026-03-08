@@ -499,6 +499,35 @@ server:
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         assert!(config.telegram.is_none());
         assert!(config.discord.is_none());
+        assert!(config.ntfy.is_none());
+    }
+
+    #[test]
+    fn test_config_with_ntfy_section() {
+        let yaml = r#"
+ntfy:
+  topic: "obsidian-borg-abc123"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let ntfy = config.ntfy.expect("ntfy should be Some");
+        assert_eq!(ntfy.topic, "obsidian-borg-abc123");
+        assert_eq!(ntfy.server, "https://ntfy.sh");
+        assert!(ntfy.token.is_none());
+    }
+
+    #[test]
+    fn test_config_with_ntfy_full() {
+        let yaml = r#"
+ntfy:
+  topic: "my-topic"
+  server: "https://ntfy.example.com"
+  token: "~/.config/ntfy/token"
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("should parse");
+        let ntfy = config.ntfy.expect("ntfy should be Some");
+        assert_eq!(ntfy.topic, "my-topic");
+        assert_eq!(ntfy.server, "https://ntfy.example.com");
+        assert_eq!(ntfy.token, Some("~/.config/ntfy/token".to_string()));
     }
 
     #[test]
