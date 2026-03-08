@@ -3,10 +3,21 @@
   "name": "obsidian-borg Capture",
   "version": "0.1.0",
   "description": "Send the current tab URL to obsidian-borg for ingestion",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "obsidian-borg@scottidler",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"],
+        "optional": []
+      }
+    }
+  },
   "permissions": ["activeTab", "storage", "notifications"],
   "host_permissions": ["http://localhost/*"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   },
   "action": {
     "default_popup": "popup.html",

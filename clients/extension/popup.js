@@ -1,23 +1,37 @@
+function renderResult(container, result) {
+  container.textContent = "";
+  if (result.title) {
+    container.className = "status ok";
+    const title = document.createElement("strong");
+    title.textContent = result.title;
+    container.appendChild(title);
+    if (result.tags && result.tags.length) {
+      const tags = document.createElement("div");
+      tags.className = "tags";
+      tags.textContent = result.tags.map(t => `#${t}`).join(", ");
+      container.appendChild(tags);
+    }
+    if (result.folder) {
+      const folder = document.createElement("div");
+      folder.className = "tags";
+      folder.textContent = `Folder: ${result.folder}`;
+      container.appendChild(folder);
+    }
+  } else if (result.status && result.status.Failed) {
+    container.className = "status err";
+    container.textContent = `Failed: ${result.status.Failed.reason}`;
+  } else {
+    container.className = "status err";
+    container.textContent = "Failed";
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const resultDiv = document.getElementById("result");
   const data = await chrome.storage.local.get("lastResult");
 
   if (data.lastResult) {
-    const r = data.lastResult;
-    if (r.title) {
-      resultDiv.className = "status ok";
-      let html = `<strong>${r.title}</strong>`;
-      if (r.tags && r.tags.length) {
-        html += `<div class="tags">${r.tags.map(t => `#${t}`).join(", ")}</div>`;
-      }
-      if (r.folder) {
-        html += `<div class="tags">Folder: ${r.folder}</div>`;
-      }
-      resultDiv.innerHTML = html;
-    } else if (r.status && r.status.Failed) {
-      resultDiv.className = "status err";
-      resultDiv.textContent = `Failed: ${r.status.Failed.reason}`;
-    }
+    renderResult(resultDiv, data.lastResult);
   }
 
   document.getElementById("capture").addEventListener("click", async () => {
@@ -36,14 +50,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
       const result = await response.json();
       await chrome.storage.local.set({ lastResult: result });
-
-      if (result.title) {
-        resultDiv.className = "status ok";
-        resultDiv.innerHTML = `<strong>${result.title}</strong>`;
-      } else {
-        resultDiv.className = "status err";
-        resultDiv.textContent = "Failed";
-      }
+      renderResult(resultDiv, result);
     } catch (err) {
       resultDiv.className = "status err";
       resultDiv.textContent = `Error: ${err.message}`;
