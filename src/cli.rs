@@ -49,6 +49,8 @@ pub enum Command {
     },
     /// Install/uninstall a keyboard shortcut to ingest URLs from clipboard
     Hotkey(HotkeyOpts),
+    /// Sign the browser extension for Firefox (AMO)
+    Sign,
     /// Migrate vault frontmatter to current schema
     Migrate {
         /// Preview changes without writing (default)

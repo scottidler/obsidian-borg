@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
             obsidian_borg::run_ingest(config, resolved_url, tags, force, clipboard, method).await
         }
         Some(Command::Hotkey(opts)) => obsidian_borg::run_hotkey(opts, &config).await,
+        Some(Command::Sign) => obsidian_borg::run_sign().await,
         Some(Command::Migrate { dry_run: _, apply }) => obsidian_borg::migrate::run_migrate(&config, apply).await,
     }
 }

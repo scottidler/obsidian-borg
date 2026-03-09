@@ -29,6 +29,7 @@ use axum::routing::{get, post};
 use colored::*;
 use eyre::{Context, Result};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
@@ -235,6 +236,75 @@ fn send_notification(summary: &str, body: &str) {
         .show();
 }
 
+pub async fn run_sign() -> Result<()> {
+    // Locate extension directory relative to the repo root
+    let repo_root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .context("Failed to run git")?;
+    if !repo_root.status.success() {
+        eyre::bail!("Not inside a git repository — cannot locate extension directory");
+    }
+    let root = PathBuf::from(String::from_utf8_lossy(&repo_root.stdout).trim().to_string());
+    let extension_dir = root.join("clients/extension");
+    if !extension_dir.exists() {
+        eyre::bail!("Extension directory not found at {}", extension_dir.display());
+    }
+
+    // Sync manifest.json version with Cargo.toml version
+    let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).context("Failed to read Cargo.toml")?;
+    let cargo_version = cargo_toml
+        .lines()
+        .find(|l| l.starts_with("version"))
+        .and_then(|l| l.split('"').nth(1))
+        .ok_or_else(|| eyre::eyre!("Failed to parse version from Cargo.toml"))?
+        .to_string();
+
+    let manifest_path = extension_dir.join("manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).context("Failed to read manifest.json")?;
+    let mut manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest).context("Failed to parse manifest.json")?;
+    let old_version = manifest_json["version"].as_str().unwrap_or("unknown").to_string();
+    manifest_json["version"] = serde_json::Value::String(cargo_version.clone());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest_json)? + "\n")
+        .context("Failed to write manifest.json")?;
+
+    if old_version != cargo_version {
+        println!("Updated manifest.json version: {old_version} -> {cargo_version}");
+    }
+
+    let jwt_issuer = std::env::var("JWT_ISSUER").context("JWT_ISSUER env var must be set (AMO API key)")?;
+    let jwt_secret = std::env::var("JWT_SECRET").context("JWT_SECRET env var must be set (AMO API secret)")?;
+
+    println!("Signing extension v{cargo_version} in {}", extension_dir.display());
+
+    let status = std::process::Command::new("web-ext")
+        .args([
+            "sign",
+            "--api-key",
+            &jwt_issuer,
+            "--api-secret",
+            &jwt_secret,
+            "--channel",
+            "unlisted",
+            "--ignore-files",
+            "sign.sh",
+        ])
+        .current_dir(&extension_dir)
+        .status()
+        .context("Failed to run web-ext — is it installed?")?;
+
+    if !status.success() {
+        eyre::bail!("web-ext sign failed");
+    }
+
+    println!(
+        "Extension signed successfully. Check {}/web-ext-artifacts/",
+        extension_dir.display()
+    );
+    Ok(())
+}
+
 pub async fn run_hotkey(opts: cli::HotkeyOpts, config: &Config) -> Result<()> {
     // CLI args override config; if CLI has default values, fall back to config
     let host = if opts.host == "localhost" { config.hotkey.host.clone() } else { opts.host };
@@ -371,7 +441,9 @@ async fn install_systemd(exe_path: &str, force: bool) -> Result<()> {
     let vault_path = home.join("repos/scottidler/obsidian");
     let secrets_path = home.join(".../.secrets");
     let manifest_bin = home.join(".cargo/bin/manifest");
-    let uid = std::process::Command::new("id").arg("-u").output()
+    let uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "1000".to_string());
     let env_file = format!("/run/user/{}/obsidian-borg.env", uid);
