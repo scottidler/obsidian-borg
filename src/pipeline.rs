@@ -9,8 +9,16 @@ use crate::transcription::TranscriptionClient;
 use crate::types::{AudioFormat, IngestMethod, IngestResult, IngestStatus};
 use crate::youtube;
 use eyre::{Context, Result};
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Instant;
+use tokio::sync::Mutex;
+
+/// In-memory dedup guard to prevent concurrent processing of the same canonical URL.
+/// The ledger file is the durable dedup index, but concurrent tasks can race past
+/// the ledger check before either writes its ✅ entry. This guard serializes that.
+static INFLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub async fn process_url(
     url: &str,
@@ -35,6 +43,9 @@ pub async fn process_url(
             // Best-effort log failure to Borg Ledger
             let canonical =
                 hygiene::normalize_url(url, &config.canonicalization.rules).unwrap_or_else(|_| url.to_string());
+
+            // Release inflight guard on failure
+            INFLIGHT.lock().await.remove(&canonical);
             let tz: chrono_tz::Tz = config
                 .frontmatter
                 .timezone
@@ -94,27 +105,61 @@ async fn process_url_inner(
 
     // Dedup check (skip if --force)
     let ledger_file = ledger::ledger_path(config);
-    if !force && let Some(original_date) = ledger::check_duplicate(&ledger_file, &canonical)? {
-        log::info!("Duplicate URL: {canonical} (first ingested {original_date})");
-        ledger::append_entry(
-            &ledger_file,
-            &LedgerEntry {
-                date: log_date,
-                time: log_time,
-                method,
-                status: LedgerStatus::Skipped,
-                title: None,
-                source: canonical.clone(),
-                original: url.to_string(),
-                folder: None,
-            },
-        )?;
-        return Ok(IngestResult {
-            status: IngestStatus::Duplicate { original_date },
-            method: Some(method),
-            canonical_url: Some(canonical),
-            ..Default::default()
-        });
+    if !force {
+        // Check in-memory inflight guard first (prevents concurrent race)
+        {
+            let mut inflight = INFLIGHT.lock().await;
+            if inflight.contains(&canonical) {
+                log::info!("Duplicate URL (inflight): {canonical}");
+                ledger::append_entry(
+                    &ledger_file,
+                    &LedgerEntry {
+                        date: log_date,
+                        time: log_time,
+                        method,
+                        status: LedgerStatus::Skipped,
+                        title: None,
+                        source: canonical.clone(),
+                        original: url.to_string(),
+                        folder: None,
+                    },
+                )?;
+                return Ok(IngestResult {
+                    status: IngestStatus::Duplicate {
+                        original_date: "inflight".to_string(),
+                    },
+                    method: Some(method),
+                    canonical_url: Some(canonical),
+                    ..Default::default()
+                });
+            }
+            inflight.insert(canonical.clone());
+        }
+
+        // Then check ledger (durable dedup)
+        if let Some(original_date) = ledger::check_duplicate(&ledger_file, &canonical)? {
+            INFLIGHT.lock().await.remove(&canonical);
+            log::info!("Duplicate URL: {canonical} (first ingested {original_date})");
+            ledger::append_entry(
+                &ledger_file,
+                &LedgerEntry {
+                    date: log_date,
+                    time: log_time,
+                    method,
+                    status: LedgerStatus::Skipped,
+                    title: None,
+                    source: canonical.clone(),
+                    original: url.to_string(),
+                    folder: None,
+                },
+            )?;
+            return Ok(IngestResult {
+                status: IngestStatus::Duplicate { original_date },
+                method: Some(method),
+                canonical_url: Some(canonical),
+                ..Default::default()
+            });
+        }
     }
 
     let url_match = router::classify_url(&canonical, &config.links)?;
@@ -157,7 +202,11 @@ async fn process_url_inner(
     all_tags.dedup();
 
     // Resolve destination folder (3-tier routing)
-    let folder = if !url_match.folder.is_empty() {
+    // If title is still "Unknown" after all extraction attempts, force fallback to Inbox
+    let folder = if title == "Unknown" || title.is_empty() {
+        log::warn!("Title is '{title}', forcing fallback to Inbox");
+        config.routing.fallback_folder.clone()
+    } else if !url_match.folder.is_empty() {
         // Tier 1: URL-type routing from config
         log::debug!("Tier 1 routing: URL config -> {}", url_match.folder);
         url_match.folder.clone()
@@ -244,6 +293,9 @@ async fn process_url_inner(
         },
     )?;
 
+    // Release inflight guard now that ledger has the ✅ entry
+    INFLIGHT.lock().await.remove(&canonical);
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -258,6 +310,20 @@ async fn process_url_inner(
 
 async fn process_youtube_fabric(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
     let yt = fabric::fetch_youtube(url, &config.fabric).await?;
+
+    // If fabric returned "Unknown" title, fall back to yt-dlp metadata
+    let (title, channel, duration_secs) = if yt.title == "Unknown" || yt.title.is_empty() {
+        log::warn!("Fabric returned no title, falling back to yt-dlp metadata");
+        match youtube::fetch_metadata(url) {
+            Ok(meta) => (meta.title, meta.uploader, meta.duration_secs),
+            Err(e) => {
+                log::warn!("yt-dlp metadata also failed: {e:#}");
+                (yt.title, yt.channel, yt.duration_secs)
+            }
+        }
+    } else {
+        (yt.title, yt.channel, yt.duration_secs)
+    };
 
     let transcript = if yt.transcript.is_empty() {
         log::warn!("Fabric returned empty transcript, falling back to yt-dlp");
@@ -275,11 +341,11 @@ async fn process_youtube_fabric(url: &str, config: &Config) -> Result<(String, S
         });
 
     let content_type = ContentType::YouTube {
-        uploader: yt.channel,
-        duration_secs: yt.duration_secs,
+        uploader: channel,
+        duration_secs,
     };
 
-    Ok((yt.title, summary, content_type))
+    Ok((title, summary, content_type))
 }
 
 async fn process_youtube_legacy(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
