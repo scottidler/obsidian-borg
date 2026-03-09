@@ -10,29 +10,29 @@ transcriber:
   timeout_secs: 120
 
 groq:
-  api_key: "~/.config/groq/api-token"    # file path or env var name
+  api_key: "GROQ_API_KEY"                 # env var name (or file path)
   model: "whisper-large-v3"
 
 llm:
   provider: "claude"
   model: "claude-sonnet-4-6"
-  api_key: "~/.config/anthropic/api-token"  # file path or env var name
+  api_key: "ANTHROPIC_API_KEY"               # env var name (or file path)
 
 # Optional: uncomment to enable Telegram bot ingestion
 # telegram:
-#   bot_token: "~/.config/telegram/api-token"  # file path or env var name
+#   bot_token: "TELEGRAM_BOT_TOKEN"             # env var name (or file path)
 #   allowed_chat_ids: []                        # empty = allow all, or list specific chat IDs
 
 # Optional: uncomment to enable Discord bot ingestion
 # discord:
-#   bot_token: "~/.config/discord/api-token"   # file path or env var name
+#   bot_token: "DISCORD_BOT_TOKEN"              # env var name (or file path)
 #   channel_id: 1234567890                      # only listen on this channel
 
 # Optional: uncomment to enable ntfy.sh mobile ingestion
 # ntfy:
 #   topic: "obsidian-borg-CHANGE-ME"           # unique topic name (acts as shared secret)
 #   server: "https://ntfy.sh"                  # optional, default: https://ntfy.sh
-#   token: "~/.config/ntfy/token"              # optional, file path or env var name
+#   token: "NTFY_TOKEN"                         # optional, env var name (or file path)
 
 # ---------------------------------------------------------------------------
 # URL Canonicalization

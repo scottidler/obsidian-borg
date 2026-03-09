@@ -369,6 +369,12 @@ async fn install_systemd(exe_path: &str, force: bool) -> Result<()> {
     }
 
     let vault_path = home.join("repos/scottidler/obsidian");
+    let secrets_path = home.join(".../.secrets");
+    let manifest_bin = home.join(".cargo/bin/manifest");
+    let uid = std::process::Command::new("id").arg("-u").output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "1000".to_string());
+    let env_file = format!("/run/user/{}/obsidian-borg.env", uid);
     let unit_content = format!(
         r#"[Unit]
 Description=obsidian-borg - Obsidian ingestion daemon
@@ -377,6 +383,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=/bin/sh -c '{manifest} age decrypt {secrets} -f env > {env_file}'
+EnvironmentFile={env_file}
 ExecStart={exe_path} daemon --start
 Restart=always
 RestartSec=5
@@ -396,6 +404,9 @@ WantedBy=default.target
 "#,
         home = home.display(),
         vault = vault_path.display(),
+        manifest = manifest_bin.display(),
+        secrets = secrets_path.display(),
+        env_file = env_file,
     );
 
     std::fs::create_dir_all(&unit_dir).context("Failed to create systemd user unit directory")?;
