@@ -380,16 +380,16 @@ async fn install_systemd(exe_path: &str, force: bool) -> Result<()> {
 Description=obsidian-borg - Obsidian ingestion daemon
 After=network-online.target
 Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
 ExecStartPre=/bin/sh -c '{manifest} age decrypt {secrets} -f env > {env_file}'
-EnvironmentFile={env_file}
+EnvironmentFile=-{env_file}
 ExecStart={exe_path} daemon --start
 Restart=always
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
 WorkingDirectory={home}
 
 # Hardening
