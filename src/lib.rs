@@ -239,25 +239,30 @@ fn send_notification(summary: &str, body: &str) {
 fn generate_manifest(config: &config::Config) -> serde_json::Value {
     let version = env!("CARGO_PKG_VERSION");
 
-    // Build host_permissions from server config
+    // Build host_permissions and connect-src list from server config
     let mut host_permissions = vec![serde_json::json!("http://localhost/*")];
+    let mut connect_sources = vec!["http://localhost:*".to_string()];
     let host = &config.server.host;
     if host != "localhost" && host != "127.0.0.1" && host != "0.0.0.0" {
-        // Add permission for the configured host (e.g. "desk.lan" -> "http://desk.lan/*")
         host_permissions.push(serde_json::json!(format!("http://{host}/*")));
-        // If it's a .lan host, also add wildcard for all .lan hosts
+        connect_sources.push(format!("http://{host}:*"));
         if host.ends_with(".lan") {
             host_permissions.push(serde_json::json!("http://*.lan/*"));
+            connect_sources.push("http://*.lan:*".to_string());
         }
     }
-    // Also check hotkey host
     let hotkey_host = &config.hotkey.host;
     if hotkey_host != "localhost" && hotkey_host != "127.0.0.1" && hotkey_host != host {
         host_permissions.push(serde_json::json!(format!("http://{hotkey_host}/*")));
+        connect_sources.push(format!("http://{hotkey_host}:*"));
         if hotkey_host.ends_with(".lan") && !host.ends_with(".lan") {
             host_permissions.push(serde_json::json!("http://*.lan/*"));
+            connect_sources.push("http://*.lan:*".to_string());
         }
     }
+
+    // CSP that explicitly allows HTTP connect to configured hosts (prevents HTTPS upgrade)
+    let csp = format!("default-src 'self'; connect-src {}", connect_sources.join(" "));
 
     serde_json::json!({
         "manifest_version": 3,
@@ -282,6 +287,9 @@ fn generate_manifest(config: &config::Config) -> serde_json::Value {
         },
         "permissions": ["activeTab", "storage", "notifications"],
         "host_permissions": host_permissions,
+        "content_security_policy": {
+            "extension_pages": csp
+        },
         "commands": {
             "capture-url": {
                 "description": "Capture current tab URL",
