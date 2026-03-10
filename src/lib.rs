@@ -251,7 +251,15 @@ pub async fn run_sign() -> Result<()> {
         eyre::bail!("Extension directory not found at {}", extension_dir.display());
     }
 
+    // Sync manifest.json version with Cargo.toml version
     let cargo_version = env!("CARGO_PKG_VERSION");
+    let manifest_path = extension_dir.join("manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).context("Failed to read manifest.json")?;
+    let mut manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest).context("Failed to parse manifest.json")?;
+    manifest_json["version"] = serde_json::Value::String(cargo_version.to_string());
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest_json)? + "\n")
+        .context("Failed to write manifest.json")?;
 
     let jwt_issuer = std::env::var("MOZILLA_JWT_ISSUER").context("MOZILLA_JWT_ISSUER env var must be set (AMO API key)")?;
     let jwt_secret = std::env::var("MOZILLA_JWT_SECRET").context("MOZILLA_JWT_SECRET env var must be set (AMO API secret)")?;
