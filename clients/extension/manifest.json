@@ -1,9 +1,9 @@
 {
   "action": {
     "default_icon": {
-      "128": "icons/icon-128.png",
-      "16": "icons/icon-16.png",
-      "48": "icons/icon-48.png"
+      "128": "icons/locutus-128.png",
+      "16": "icons/locutus-16.png",
+      "48": "icons/locutus-48.png"
     }
   },
   "background": {
@@ -37,9 +37,9 @@
     "http://localhost/*"
   ],
   "icons": {
-    "128": "icons/icon-128.png",
-    "16": "icons/icon-16.png",
-    "48": "icons/icon-48.png"
+    "128": "icons/locutus-128.png",
+    "16": "icons/locutus-16.png",
+    "48": "icons/locutus-48.png"
   },
   "manifest_version": 3,
   "name": "obsidian-borg Capture",
