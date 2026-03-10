@@ -15,6 +15,75 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
+/// Extract the best title from fabric's markdown output.
+///
+/// Strategy (in priority order):
+/// 1. `Title:` metadata line (fabric always emits this first)
+///    - For HTML pages this is the <title> tag (usually great)
+///    - For PDFs this is often the filename - we clean it up
+/// 2. First `# ` heading in the markdown body
+/// 3. Derive from the URL path (last segment, cleaned up)
+/// 4. Raw URL as last resort
+fn extract_article_title(article_md: &str, url: &str) -> String {
+    // Strategy 1: Parse Title: metadata line
+    if let Some(title) = article_md
+        .lines()
+        .find(|line| line.starts_with("Title:"))
+        .map(|line| line.trim_start_matches("Title:").trim().to_string())
+    {
+        if !title.is_empty() {
+            // If it looks like a filename (has a file extension), clean it up
+            let cleaned = if title.contains('.') && title.rsplit('.').next().is_some_and(|ext| {
+                matches!(ext.to_lowercase().as_str(), "pdf" | "html" | "htm" | "txt" | "md")
+            }) {
+                // Strip extension, replace hyphens/underscores with spaces
+                let without_ext = title.rsplit_once('.').map(|(base, _)| base).unwrap_or(&title);
+                without_ext.replace(['-', '_'], " ")
+            } else {
+                title
+            };
+            if !cleaned.is_empty() {
+                return cleaned;
+            }
+        }
+    }
+
+    // Strategy 2: First # heading in the body (after "Markdown Content:" if present)
+    let body_start = article_md
+        .find("Markdown Content:")
+        .map(|pos| pos + "Markdown Content:".len())
+        .unwrap_or(0);
+    if let Some(title) = article_md[body_start..]
+        .lines()
+        .find(|line| line.starts_with("# "))
+        .map(|line| line.trim_start_matches("# ").trim().to_string())
+    {
+        if !title.is_empty() {
+            return title;
+        }
+    }
+
+    // Strategy 3: Derive from URL path
+    if let Some(segment) = url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty() && *s != url)
+    {
+        let cleaned = segment
+            .rsplit_once('.')
+            .map(|(base, _)| base)
+            .unwrap_or(segment)
+            .replace(['-', '_'], " ");
+        if !cleaned.is_empty() {
+            return cleaned;
+        }
+    }
+
+    // Strategy 4: raw URL
+    url.to_string()
+}
+
 /// In-memory dedup guard to prevent concurrent processing of the same canonical URL.
 /// The ledger file is the durable dedup index, but concurrent tasks can race past
 /// the ledger check before either writes its ✅ entry. This guard serializes that.
@@ -384,11 +453,7 @@ async fn process_youtube_legacy(url: &str, config: &Config) -> Result<(String, S
 async fn process_article_fabric(url: &str, config: &Config) -> Result<(String, String, ContentType)> {
     let article_md = fabric::fetch_article(url, &config.fabric).await?;
 
-    let title = article_md
-        .lines()
-        .find(|line| line.starts_with("# "))
-        .map(|line| line.trim_start_matches("# ").to_string())
-        .unwrap_or_else(|| url.to_string());
+    let title = extract_article_title(&article_md, url);
 
     // Summarize via Fabric (graceful failure)
     let summary = fabric::summarize(&article_md, false, &config.fabric)
@@ -404,11 +469,7 @@ async fn process_article_fabric(url: &str, config: &Config) -> Result<(String, S
 async fn process_article_jina(url: &str) -> Result<(String, String, ContentType)> {
     let article_md = jina::fetch_article_markdown(url).await?;
 
-    let title = article_md
-        .lines()
-        .find(|line| line.starts_with("# "))
-        .map(|line| line.trim_start_matches("# ").to_string())
-        .unwrap_or_else(|| url.to_string());
+    let title = extract_article_title(&article_md, url);
 
     Ok((title, article_md, ContentType::Article))
 }
@@ -487,6 +548,42 @@ mod tests {
         };
         let dest = resolve_destination("/vault", "/vault/Inbox", "Tech/AI-LLM", &routing);
         assert_eq!(dest, PathBuf::from("/vault/Tech/AI-LLM"));
+    }
+
+    #[test]
+    fn test_extract_title_from_fabric_metadata() {
+        let md = "Title: Rust Programming Language\n\nURL Source: https://rust-lang.org\n\nMarkdown Content:\n# Rust\n";
+        assert_eq!(
+            extract_article_title(md, "https://rust-lang.org"),
+            "Rust Programming Language"
+        );
+    }
+
+    #[test]
+    fn test_extract_title_from_pdf_filename() {
+        let md = "Title: The-Complete-Guide-to-Building-Skill-for-Claude.pdf\n\nURL Source: https://example.com/doc.pdf\n\nMarkdown Content:\nThe Complete Guide\n\n# to Building Skills\n";
+        assert_eq!(
+            extract_article_title(md, "https://example.com/doc.pdf"),
+            "The Complete Guide to Building Skill for Claude"
+        );
+    }
+
+    #[test]
+    fn test_extract_title_falls_back_to_heading() {
+        let md = "Some random content\n# My Article Title\nBody text\n";
+        assert_eq!(
+            extract_article_title(md, "https://example.com/page"),
+            "My Article Title"
+        );
+    }
+
+    #[test]
+    fn test_extract_title_falls_back_to_url_segment() {
+        let md = "No title metadata here\nJust plain text\n";
+        assert_eq!(
+            extract_article_title(md, "https://example.com/my-great-article"),
+            "my great article"
+        );
     }
 
     #[test]
