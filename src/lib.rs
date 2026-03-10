@@ -236,8 +236,78 @@ fn send_notification(summary: &str, body: &str) {
         .show();
 }
 
-pub async fn run_sign() -> Result<()> {
-    // Locate extension directory relative to the repo root
+fn generate_manifest(config: &config::Config) -> serde_json::Value {
+    let version = env!("CARGO_PKG_VERSION");
+
+    // Build host_permissions from server config
+    let mut host_permissions = vec![serde_json::json!("http://localhost/*")];
+    let host = &config.server.host;
+    if host != "localhost" && host != "127.0.0.1" && host != "0.0.0.0" {
+        // Add permission for the configured host (e.g. "desk.lan" -> "http://desk.lan/*")
+        host_permissions.push(serde_json::json!(format!("http://{host}/*")));
+        // If it's a .lan host, also add wildcard for all .lan hosts
+        if host.ends_with(".lan") {
+            host_permissions.push(serde_json::json!("http://*.lan/*"));
+        }
+    }
+    // Also check hotkey host
+    let hotkey_host = &config.hotkey.host;
+    if hotkey_host != "localhost" && hotkey_host != "127.0.0.1" && hotkey_host != host {
+        host_permissions.push(serde_json::json!(format!("http://{hotkey_host}/*")));
+        if hotkey_host.ends_with(".lan") && !host.ends_with(".lan") {
+            host_permissions.push(serde_json::json!("http://*.lan/*"));
+        }
+    }
+
+    serde_json::json!({
+        "manifest_version": 3,
+        "name": "obsidian-borg Capture",
+        "description": "Send the current tab URL to obsidian-borg for ingestion",
+        "version": version,
+        "icons": {
+            "16": "icons/locutus-16.png",
+            "48": "icons/locutus-48.png",
+            "128": "icons/locutus-128.png"
+        },
+        "action": {
+            "default_icon": {
+                "16": "icons/locutus-16.png",
+                "48": "icons/locutus-48.png",
+                "128": "icons/locutus-128.png"
+            }
+        },
+        "background": {
+            "scripts": ["background.js"],
+            "service_worker": "background.js"
+        },
+        "permissions": ["activeTab", "storage", "notifications"],
+        "host_permissions": host_permissions,
+        "commands": {
+            "capture-url": {
+                "description": "Capture current tab URL",
+                "suggested_key": {
+                    "default": "Alt+Shift+B"
+                }
+            }
+        },
+        "options_ui": {
+            "page": "options.html",
+            "open_in_tab": false
+        },
+        "browser_specific_settings": {
+            "gecko": {
+                "id": "obsidian-borg@scottidler",
+                "strict_min_version": "140.0",
+                "data_collection_permissions": {
+                    "required": ["none"],
+                    "optional": []
+                }
+            }
+        }
+    })
+}
+
+pub async fn run_sign(config: &config::Config) -> Result<()> {
     let repo_root = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
@@ -251,16 +321,13 @@ pub async fn run_sign() -> Result<()> {
         eyre::bail!("Extension directory not found at {}", extension_dir.display());
     }
 
-    // Sync manifest.json version with Cargo.toml version
-    let cargo_version = env!("CARGO_PKG_VERSION");
+    // Generate manifest.json from config
+    let manifest = generate_manifest(config);
     let manifest_path = extension_dir.join("manifest.json");
-    let manifest = std::fs::read_to_string(&manifest_path).context("Failed to read manifest.json")?;
-    let mut manifest_json: serde_json::Value =
-        serde_json::from_str(&manifest).context("Failed to parse manifest.json")?;
-    manifest_json["version"] = serde_json::Value::String(cargo_version.to_string());
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest_json)? + "\n")
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)? + "\n")
         .context("Failed to write manifest.json")?;
 
+    let cargo_version = env!("CARGO_PKG_VERSION");
     let jwt_issuer = std::env::var("MOZILLA_JWT_ISSUER").context("MOZILLA_JWT_ISSUER env var must be set (AMO API key)")?;
     let jwt_secret = std::env::var("MOZILLA_JWT_SECRET").context("MOZILLA_JWT_SECRET env var must be set (AMO API secret)")?;
 
