@@ -251,30 +251,10 @@ pub async fn run_sign() -> Result<()> {
         eyre::bail!("Extension directory not found at {}", extension_dir.display());
     }
 
-    // Sync manifest.json version with Cargo.toml version
-    let cargo_toml = std::fs::read_to_string(root.join("Cargo.toml")).context("Failed to read Cargo.toml")?;
-    let cargo_version = cargo_toml
-        .lines()
-        .find(|l| l.starts_with("version"))
-        .and_then(|l| l.split('"').nth(1))
-        .ok_or_else(|| eyre::eyre!("Failed to parse version from Cargo.toml"))?
-        .to_string();
+    let cargo_version = env!("CARGO_PKG_VERSION");
 
-    let manifest_path = extension_dir.join("manifest.json");
-    let manifest = std::fs::read_to_string(&manifest_path).context("Failed to read manifest.json")?;
-    let mut manifest_json: serde_json::Value =
-        serde_json::from_str(&manifest).context("Failed to parse manifest.json")?;
-    let old_version = manifest_json["version"].as_str().unwrap_or("unknown").to_string();
-    manifest_json["version"] = serde_json::Value::String(cargo_version.clone());
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest_json)? + "\n")
-        .context("Failed to write manifest.json")?;
-
-    if old_version != cargo_version {
-        println!("Updated manifest.json version: {old_version} -> {cargo_version}");
-    }
-
-    let jwt_issuer = std::env::var("JWT_ISSUER").context("JWT_ISSUER env var must be set (AMO API key)")?;
-    let jwt_secret = std::env::var("JWT_SECRET").context("JWT_SECRET env var must be set (AMO API secret)")?;
+    let jwt_issuer = std::env::var("MOZILLA_JWT_ISSUER").context("MOZILLA_JWT_ISSUER env var must be set (AMO API key)")?;
+    let jwt_secret = std::env::var("MOZILLA_JWT_SECRET").context("MOZILLA_JWT_SECRET env var must be set (AMO API secret)")?;
 
     println!("Signing extension v{cargo_version} in {}", extension_dir.display());
 
