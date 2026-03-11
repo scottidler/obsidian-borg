@@ -14,16 +14,15 @@ tasks:
     help: "Run all quality checks (compile, clippy, format)"
     bash: |
       echo "=== Checking compilation ==="
-      cargo check --all-targets
+      cargo check --all-targets --all-features
       echo ""
       echo "=== Running Clippy ==="
-      cargo clippy --all-targets -- -D warnings
+      cargo clippy --all-targets --all-features -- -D warnings
       echo ""
       echo "=== Checking format ==="
-      cargo fmt
-      cargo fmt --check
+      cargo fmt --all --check
       echo ""
-      echo "All checks passed!"
+      echo "✅ All checks passed!"
 
   ensure:
     help: "Fail if no tests exist"
@@ -49,7 +48,7 @@ tasks:
     help: "Run all tests"
     before: [ensure]
     bash: |
-      cargo test
+      cargo test --all-features
 
   ci:
     help: "Full CI pipeline (lint + check + test)"
@@ -182,10 +181,16 @@ tasks:
     help: "Build release binary"
     bash: |
       cargo build --release
-      echo "Release build complete"
+      echo "✅ Release build complete"
 
   clean:
     help: "Clean build artifacts"
     bash: |
       cargo clean
-      echo "Build artifacts cleaned"
+      echo "✅ Build artifacts cleaned"
+
+  install:
+    help: "Install binary locally via cargo"
+    bash: |
+      cargo install --path .
+      echo "✅ Binary installed to ~/.cargo/bin"
