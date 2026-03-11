@@ -336,8 +336,10 @@ pub async fn run_sign(config: &config::Config) -> Result<()> {
         .context("Failed to write manifest.json")?;
 
     let cargo_version = env!("CARGO_PKG_VERSION");
-    let jwt_issuer = std::env::var("MOZILLA_JWT_ISSUER").context("MOZILLA_JWT_ISSUER env var must be set (AMO API key)")?;
-    let jwt_secret = std::env::var("MOZILLA_JWT_SECRET").context("MOZILLA_JWT_SECRET env var must be set (AMO API secret)")?;
+    let jwt_issuer =
+        std::env::var("MOZILLA_JWT_ISSUER").context("MOZILLA_JWT_ISSUER env var must be set (AMO API key)")?;
+    let jwt_secret =
+        std::env::var("MOZILLA_JWT_SECRET").context("MOZILLA_JWT_SECRET env var must be set (AMO API secret)")?;
 
     println!("Signing extension v{cargo_version} in {}", extension_dir.display());
 

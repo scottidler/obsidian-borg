@@ -30,21 +30,23 @@ fn extract_article_title(article_md: &str, url: &str) -> String {
         .lines()
         .find(|line| line.starts_with("Title:"))
         .map(|line| line.trim_start_matches("Title:").trim().to_string())
+        && !title.is_empty()
     {
-        if !title.is_empty() {
-            // If it looks like a filename (has a file extension), clean it up
-            let cleaned = if title.contains('.') && title.rsplit('.').next().is_some_and(|ext| {
-                matches!(ext.to_lowercase().as_str(), "pdf" | "html" | "htm" | "txt" | "md")
-            }) {
-                // Strip extension, replace hyphens/underscores with spaces
-                let without_ext = title.rsplit_once('.').map(|(base, _)| base).unwrap_or(&title);
-                without_ext.replace(['-', '_'], " ")
-            } else {
-                title
-            };
-            if !cleaned.is_empty() {
-                return cleaned;
-            }
+        // If it looks like a filename (has a file extension), clean it up
+        let cleaned = if title.contains('.')
+            && title
+                .rsplit('.')
+                .next()
+                .is_some_and(|ext| matches!(ext.to_lowercase().as_str(), "pdf" | "html" | "htm" | "txt" | "md"))
+        {
+            // Strip extension, replace hyphens/underscores with spaces
+            let without_ext = title.rsplit_once('.').map(|(base, _)| base).unwrap_or(&title);
+            without_ext.replace(['-', '_'], " ")
+        } else {
+            title
+        };
+        if !cleaned.is_empty() {
+            return cleaned;
         }
     }
 
@@ -57,10 +59,9 @@ fn extract_article_title(article_md: &str, url: &str) -> String {
         .lines()
         .find(|line| line.starts_with("# "))
         .map(|line| line.trim_start_matches("# ").trim().to_string())
+        && !title.is_empty()
     {
-        if !title.is_empty() {
-            return title;
-        }
+        return title;
     }
 
     // Strategy 3: Derive from URL path
