@@ -310,6 +310,9 @@ pub struct TelegramConfig {
     pub bot_token: String,
     #[serde(default)]
     pub allowed_chat_ids: Vec<i64>,
+    /// If set, only run the Telegram poller on the host with this hostname.
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -317,6 +320,9 @@ pub struct DiscordConfig {
     #[serde(alias = "bot_token_env")]
     pub bot_token: String,
     pub channel_id: u64,
+    /// If set, only run the Discord bot on the host with this hostname.
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -325,10 +331,28 @@ pub struct NtfyConfig {
     #[serde(default = "default_ntfy_server")]
     pub server: String,
     pub token: Option<String>,
+    /// If set, only run the ntfy subscriber on the host with this hostname.
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 fn default_ntfy_server() -> String {
     "https://ntfy.sh".to_string()
+}
+
+/// Check whether a service should run on this host.
+/// Returns true if `host` is None/empty (run everywhere) or matches the current hostname.
+pub fn is_local_host(host: &Option<String>) -> bool {
+    match host {
+        None => true,
+        Some(h) if h.is_empty() => true,
+        Some(h) => {
+            let Ok(current) = hostname::get() else {
+                return true; // if we can't determine hostname, run anyway
+            };
+            current.to_string_lossy().eq_ignore_ascii_case(h)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]

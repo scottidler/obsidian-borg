@@ -81,55 +81,70 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     log::info!("HTTP server listening on {addr}");
     println!("{} http server on {}", "-->".green(), addr.to_string().cyan());
 
-    // Telegram bot (config-driven)
+    // Telegram bot (config-driven, host-gated)
     if let Some(tg_config) = &config.telegram {
-        match config::resolve_secret(&tg_config.bot_token) {
-            Ok(token) => {
-                log::info!(
-                    "Telegram bot enabled (allowed_chat_ids: {:?})",
-                    tg_config.allowed_chat_ids
-                );
-                let tg = tg_config.clone();
-                let cfg = config.clone();
-                tasks.spawn(async move { telegram::run(token, tg, cfg).await });
-                println!("{} telegram bot active", "-->".green());
-            }
-            Err(e) => {
-                log::warn!("Telegram configured but token not available: {e:#}");
-                eprintln!("{} telegram bot skipped (token not available)", "-->".yellow());
+        if !config::is_local_host(&tg_config.host) {
+            log::info!("Telegram configured but host {:?} does not match this machine, skipping", tg_config.host);
+            eprintln!("{} telegram bot skipped (host mismatch)", "-->".yellow());
+        } else {
+            match config::resolve_secret(&tg_config.bot_token) {
+                Ok(token) => {
+                    log::info!(
+                        "Telegram bot enabled (allowed_chat_ids: {:?})",
+                        tg_config.allowed_chat_ids
+                    );
+                    let tg = tg_config.clone();
+                    let cfg = config.clone();
+                    tasks.spawn(async move { telegram::run(token, tg, cfg).await });
+                    println!("{} telegram bot active", "-->".green());
+                }
+                Err(e) => {
+                    log::warn!("Telegram configured but token not available: {e:#}");
+                    eprintln!("{} telegram bot skipped (token not available)", "-->".yellow());
+                }
             }
         }
     }
 
-    // Discord bot (config-driven)
+    // Discord bot (config-driven, host-gated)
     if let Some(dc_config) = &config.discord {
-        match config::resolve_secret(&dc_config.bot_token) {
-            Ok(token) => {
-                log::info!("Discord bot enabled (channel_id: {})", dc_config.channel_id);
-                let dc = dc_config.clone();
-                let cfg = config.clone();
-                tasks.spawn(async move { discord::run(token, dc, cfg).await });
-                println!("{} discord bot active", "-->".green());
-            }
-            Err(e) => {
-                log::warn!("Discord configured but token not available: {e:#}");
-                eprintln!("{} discord bot skipped (token not available)", "-->".yellow());
+        if !config::is_local_host(&dc_config.host) {
+            log::info!("Discord configured but host {:?} does not match this machine, skipping", dc_config.host);
+            eprintln!("{} discord bot skipped (host mismatch)", "-->".yellow());
+        } else {
+            match config::resolve_secret(&dc_config.bot_token) {
+                Ok(token) => {
+                    log::info!("Discord bot enabled (channel_id: {})", dc_config.channel_id);
+                    let dc = dc_config.clone();
+                    let cfg = config.clone();
+                    tasks.spawn(async move { discord::run(token, dc, cfg).await });
+                    println!("{} discord bot active", "-->".green());
+                }
+                Err(e) => {
+                    log::warn!("Discord configured but token not available: {e:#}");
+                    eprintln!("{} discord bot skipped (token not available)", "-->".yellow());
+                }
             }
         }
     }
 
-    // ntfy subscriber (config-driven)
+    // ntfy subscriber (config-driven, host-gated)
     if let Some(ntfy_config) = &config.ntfy {
-        let server = ntfy_config.server.clone();
-        let topic = ntfy_config.topic.clone();
-        let token = ntfy_config.token.as_ref().and_then(|t| config::resolve_secret(t).ok());
-        let cfg = config.clone();
-        tasks.spawn(async move { ntfy::run(server, topic, token, cfg).await });
-        println!(
-            "{} ntfy subscriber active (topic: {})",
-            "-->".green(),
-            ntfy_config.topic
-        );
+        if !config::is_local_host(&ntfy_config.host) {
+            log::info!("ntfy configured but host {:?} does not match this machine, skipping", ntfy_config.host);
+            eprintln!("{} ntfy subscriber skipped (host mismatch)", "-->".yellow());
+        } else {
+            let server = ntfy_config.server.clone();
+            let topic = ntfy_config.topic.clone();
+            let token = ntfy_config.token.as_ref().and_then(|t| config::resolve_secret(t).ok());
+            let cfg = config.clone();
+            tasks.spawn(async move { ntfy::run(server, topic, token, cfg).await });
+            println!(
+                "{} ntfy subscriber active (topic: {})",
+                "-->".green(),
+                ntfy_config.topic
+            );
+        }
     }
 
     // Monitor tasks: log failures but keep the daemon alive as long as HTTP is running
