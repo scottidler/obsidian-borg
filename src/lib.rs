@@ -405,18 +405,15 @@ pub async fn run_daemon(config: Config, verbose: bool, opts: cli::DaemonOpts) ->
     use cli::DaemonOpts;
 
     match opts {
-        DaemonOpts { install: true, .. } => install_service(false).await,
+        DaemonOpts { install: true, .. } => install_service().await,
         DaemonOpts { uninstall: true, .. } => uninstall_service().await,
         DaemonOpts { reinstall: true, .. } => {
             uninstall_service().await.ok();
-            install_service(false).await
+            install_service().await
         }
         DaemonOpts { start: true, .. } => run_server(config, verbose).await,
         DaemonOpts { stop: true, .. } => stop_service().await,
-        DaemonOpts { restart: true, .. } => {
-            stop_service().await.ok();
-            run_server(config, verbose).await
-        }
+        DaemonOpts { restart: true, .. } => restart_service().await,
         DaemonOpts { status: true, .. } => show_status().await,
         _ => {
             eprintln!("No daemon action specified. See: obsidian-borg daemon --help");
@@ -425,14 +422,14 @@ pub async fn run_daemon(config: Config, verbose: bool, opts: cli::DaemonOpts) ->
     }
 }
 
-async fn install_service(force: bool) -> Result<()> {
+async fn install_service() -> Result<()> {
     let exe_path = std::env::current_exe().context("Failed to detect binary path")?;
-    let exe = exe_path.display();
+    let exe = exe_path.display().to_string();
 
     if cfg!(target_os = "linux") {
-        install_systemd(&exe.to_string(), force).await
+        install_systemd(&exe).await
     } else if cfg!(target_os = "macos") {
-        install_launchd(&exe.to_string(), force).await
+        install_launchd(&exe).await
     } else {
         eyre::bail!("Unsupported platform for service install")
     }
@@ -449,42 +446,35 @@ async fn uninstall_service() -> Result<()> {
 }
 
 async fn stop_service() -> Result<()> {
-    use tokio::process::Command;
-
     if cfg!(target_os = "linux") {
-        let output = Command::new("systemctl")
-            .args(["--user", "stop", "obsidian-borg"])
-            .output()
-            .await
-            .context("Failed to run systemctl")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            eyre::bail!("Failed to stop service: {stderr}");
-        }
+        systemctl(&["stop", "obsidian-borg"]).await?;
         println!("Stopped obsidian-borg service");
     } else if cfg!(target_os = "macos") {
-        let output = Command::new("launchctl")
-            .args(["stop", "com.obsidian-borg"])
-            .output()
-            .await
-            .context("Failed to run launchctl")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            eyre::bail!("Failed to stop service: {stderr}");
-        }
+        launchctl(&["stop", "com.obsidian-borg"]).await?;
         println!("Stopped obsidian-borg service");
     } else {
         eyre::bail!("Unsupported platform for service stop")
     }
+    Ok(())
+}
 
+async fn restart_service() -> Result<()> {
+    if cfg!(target_os = "linux") {
+        systemctl(&["restart", "obsidian-borg"]).await?;
+        println!("Restarted obsidian-borg service");
+    } else if cfg!(target_os = "macos") {
+        launchctl(&["stop", "com.obsidian-borg"]).await.ok();
+        launchctl(&["start", "com.obsidian-borg"]).await?;
+        println!("Restarted obsidian-borg service");
+    } else {
+        eyre::bail!("Unsupported platform for service restart")
+    }
     Ok(())
 }
 
 async fn show_status() -> Result<()> {
-    use tokio::process::Command;
-
     if cfg!(target_os = "linux") {
-        let output = Command::new("systemctl")
+        let output = tokio::process::Command::new("systemctl")
             .args(["--user", "status", "obsidian-borg"])
             .output()
             .await
@@ -492,7 +482,7 @@ async fn show_status() -> Result<()> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         println!("{stdout}");
     } else if cfg!(target_os = "macos") {
-        let output = Command::new("launchctl")
+        let output = tokio::process::Command::new("launchctl")
             .args(["list", "com.obsidian-borg"])
             .output()
             .await
@@ -502,21 +492,43 @@ async fn show_status() -> Result<()> {
     } else {
         eyre::bail!("Unsupported platform for service status")
     }
-
     Ok(())
 }
 
-async fn install_systemd(exe_path: &str, force: bool) -> Result<()> {
+/// Run `systemctl --user <args>` and return Ok if it succeeds.
+async fn systemctl(args: &[&str]) -> Result<()> {
+    let mut cmd_args = vec!["--user"];
+    cmd_args.extend(args);
+    let output = tokio::process::Command::new("systemctl")
+        .args(&cmd_args)
+        .output()
+        .await
+        .context("Failed to run systemctl")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eyre::bail!("systemctl --user {} failed: {stderr}", args.join(" "));
+    }
+    Ok(())
+}
+
+/// Run `launchctl <args>` and return Ok if it succeeds.
+async fn launchctl(args: &[&str]) -> Result<()> {
+    let output = tokio::process::Command::new("launchctl")
+        .args(args)
+        .output()
+        .await
+        .context("Failed to run launchctl")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eyre::bail!("launchctl {} failed: {stderr}", args.join(" "));
+    }
+    Ok(())
+}
+
+async fn install_systemd(exe_path: &str) -> Result<()> {
     let home = dirs::home_dir().ok_or_else(|| eyre::eyre!("Cannot determine home directory"))?;
     let unit_dir = home.join(".config/systemd/user");
     let unit_path = unit_dir.join("obsidian-borg.service");
-
-    if unit_path.exists() && !force {
-        eyre::bail!(
-            "Service file already exists at {}. Use --force to overwrite.",
-            unit_path.display()
-        );
-    }
 
     let vault_path = home.join("repos/scottidler/obsidian");
     let secrets_path = home.join(".../.secrets");
@@ -561,45 +573,27 @@ WantedBy=default.target
         env_file = env_file,
     );
 
+    // Stop the running service if active (ignore errors - may not be running)
+    systemctl(&["stop", "obsidian-borg"]).await.ok();
+
+    // Write (or overwrite) the unit file
     std::fs::create_dir_all(&unit_dir).context("Failed to create systemd user unit directory")?;
     std::fs::write(&unit_path, &unit_content).context("Failed to write systemd unit file")?;
     println!("Wrote {}", unit_path.display());
 
-    let status = std::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .status()
-        .context("Failed to run systemctl daemon-reload")?;
-    if !status.success() {
-        eyre::bail!("systemctl --user daemon-reload failed");
-    }
-
-    let status = std::process::Command::new("systemctl")
-        .args(["--user", "enable", "--now", "obsidian-borg"])
-        .status()
-        .context("Failed to enable obsidian-borg service")?;
-    if !status.success() {
-        eyre::bail!("systemctl --user enable --now obsidian-borg failed");
-    }
+    // Reload so systemd picks up changes, then enable + start
+    systemctl(&["daemon-reload"]).await?;
+    systemctl(&["enable", "--now", "obsidian-borg"]).await?;
 
     println!("Service installed and started.");
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "status", "obsidian-borg", "--no-pager"])
-        .status();
-
+    show_status().await.ok();
     Ok(())
 }
 
-async fn install_launchd(exe_path: &str, force: bool) -> Result<()> {
+async fn install_launchd(exe_path: &str) -> Result<()> {
     let home = dirs::home_dir().ok_or_else(|| eyre::eyre!("Cannot determine home directory"))?;
     let plist_dir = home.join("Library/LaunchAgents");
     let plist_path = plist_dir.join("com.obsidian-borg.plist");
-
-    if plist_path.exists() && !force {
-        eyre::bail!(
-            "Plist already exists at {}. Use --force to overwrite.",
-            plist_path.display()
-        );
-    }
 
     let plist_content = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -611,7 +605,8 @@ async fn install_launchd(exe_path: &str, force: bool) -> Result<()> {
     <key>ProgramArguments</key>
     <array>
         <string>{exe_path}</string>
-        <string>serve</string>
+        <string>daemon</string>
+        <string>--start</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -626,17 +621,14 @@ async fn install_launchd(exe_path: &str, force: bool) -> Result<()> {
 "#
     );
 
+    // Unload if already loaded (ignore errors - may not be loaded)
+    launchctl(&["unload", &plist_path.to_string_lossy()]).await.ok();
+
     std::fs::create_dir_all(&plist_dir).context("Failed to create LaunchAgents directory")?;
     std::fs::write(&plist_path, &plist_content).context("Failed to write plist file")?;
     println!("Wrote {}", plist_path.display());
 
-    let status = std::process::Command::new("launchctl")
-        .args(["load", &plist_path.to_string_lossy()])
-        .status()
-        .context("Failed to run launchctl load")?;
-    if !status.success() {
-        eyre::bail!("launchctl load failed");
-    }
+    launchctl(&["load", &plist_path.to_string_lossy()]).await?;
 
     println!("Service installed and started.");
     Ok(())

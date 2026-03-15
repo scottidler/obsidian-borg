@@ -13,7 +13,6 @@ async fn main() -> Result<()> {
     let log_level = logging::resolve_log_level(cli.log_level.as_deref(), config.log_level.as_deref());
     logging::setup_logging(&log_level).context("Failed to setup logging")?;
 
-    log::info!("Starting obsidian-borg with config from: {:?}", cli.config);
     log::debug!("Resolved log level: {log_level}");
     log::debug!("Config: {:?}", config);
 
@@ -26,7 +25,10 @@ async fn main() -> Result<()> {
             Cli::parse_from(["obsidian-borg", "--help"]);
             Ok(())
         }
-        Some(Command::Daemon(opts)) => obsidian_borg::run_daemon(config, cli.verbose, opts).await,
+        Some(Command::Daemon(opts)) => {
+            log::info!("Starting obsidian-borg with config from: {:?}", cli.config);
+            obsidian_borg::run_daemon(config, cli.verbose, opts).await
+        }
         Some(Command::Ingest {
             url,
             clipboard,

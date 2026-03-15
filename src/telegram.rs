@@ -27,6 +27,12 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
             }
         }
 
+        // Force-terminate any stale polling session from a previous instance
+        // (prevents TerminatedByOtherGetUpdates on daemon restart)
+        if let Err(e) = bot.delete_webhook().drop_pending_updates(true).await {
+            log::warn!("telegram: failed to drop pending updates: {e}");
+        }
+
         let tg = tg_config.clone();
         let cfg = config.clone();
 

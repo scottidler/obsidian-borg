@@ -87,7 +87,7 @@ pub struct HotkeyOpts {
 
 #[derive(Parser, Debug)]
 pub struct DaemonOpts {
-    /// Install system service
+    /// Install system service (idempotent - safe to run repeatedly)
     #[arg(long)]
     pub install: bool,
 
@@ -95,11 +95,11 @@ pub struct DaemonOpts {
     #[arg(long)]
     pub uninstall: bool,
 
-    /// Reinstall system service (uninstall then install)
+    /// Reinstall system service (full teardown then install)
     #[arg(long)]
     pub reinstall: bool,
 
-    /// Start daemon
+    /// Start daemon (used by systemd ExecStart)
     #[arg(long)]
     pub start: bool,
 
