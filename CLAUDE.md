@@ -90,24 +90,25 @@ raw URL
 Canonicalization rules are config-driven with built-in defaults. Add new rules
 (e.g., old.reddit.com -> reddit.com) in the config without recompiling.
 
-## Borg Log and Dedup
+## Borg Ledger and Dedup
 
-- `~/repos/scottidler/obsidian/⚙️ System/Borg Log.md` - append-only markdown table
+- `~/repos/scottidler/obsidian/⚙️ System/borg-ledger.md` - append-only markdown table
 - Every ingest (success, failure, duplicate) is logged
 - Dedup checks this file before processing - only `✅` rows count as duplicates
 - `--force` flag on `ingest` bypasses dedup
-- The log IS the dedup index - no external database
+- The ledger IS the dedup index - no external database
 
 ## Borg Dashboard
 
-- `~/repos/scottidler/obsidian/⚙️ System/Borg Dashboard.md` - Dataview queries
+- `~/repos/scottidler/obsidian/⚙️ System/borg-dashboard.md` - Dataview queries
 - Shows notes added today, yesterday, this week, this month
 - Self-updating via Dataview - obsidian-borg creates it once, never modifies
 
 ## Key Conventions
 
+- **Filenames:** Always lowercase-hyphenated slugs (e.g., `claude-code-obsidian-guide.md`). No spaces, no uppercase, no underscores. The `title` frontmatter field carries the human-readable display name. `sanitize_filename()` in `src/hygiene.rs` enforces this.
 - Tags: always lowercase-hyphenated (`ai-llm` not `AI_LLM`)
-- Vault folders use emoji prefixes on disk
+- Vault folders: emoji prefixes on top-level only, lowercase subdirectories
 - Config secrets can be file paths or env var names (resolved by `config::resolve_secret`)
 - Fabric binary at `/home/saidler/go/bin/fabric`
 - NEVER use `pip install` - use `pipx`

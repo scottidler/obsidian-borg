@@ -77,7 +77,7 @@ GROUP BY type
 /// Resolve the dashboard path from config.
 pub fn dashboard_path(config: &Config) -> PathBuf {
     let root = expand_tilde(&config.vault.root_path);
-    root.join("⚙️ System").join("Borg Dashboard.md")
+    root.join("⚙️ System").join("borg-dashboard.md")
 }
 
 /// Create the Borg Dashboard file if it doesn't exist.

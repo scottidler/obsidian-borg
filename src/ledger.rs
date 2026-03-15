@@ -52,7 +52,7 @@ All URLs ingested by obsidian-borg. This file is machine-maintained — do not e
 /// Resolve the Borg Ledger path from config.
 pub fn ledger_path(config: &Config) -> PathBuf {
     let root = expand_tilde(&config.vault.root_path);
-    root.join("⚙️ System").join("Borg Ledger.md")
+    root.join("⚙️ System").join("borg-ledger.md")
 }
 
 /// Create the Borg Ledger file with frontmatter and header if it doesn't exist.
@@ -155,7 +155,7 @@ mod tests {
     fn temp_ledger_path() -> PathBuf {
         let dir = std::env::temp_dir().join("obsidian-borg-test-ledger");
         fs::create_dir_all(&dir).ok();
-        dir.join("Borg Ledger.md")
+        dir.join("borg-ledger.md")
     }
 
     fn cleanup(path: &Path) {

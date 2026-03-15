@@ -193,9 +193,9 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("Hello World!"), "Hello World");
-        assert_eq!(sanitize_filename("Test: A/B \"quotes\""), "Test A B quotes");
-        assert_eq!(sanitize_filename("normal-file_name"), "normal-file_name");
+        assert_eq!(sanitize_filename("Hello World!"), "hello-world");
+        assert_eq!(sanitize_filename("Test: A/B \"quotes\""), "test-a-b-quotes");
+        assert_eq!(sanitize_filename("normal-file_name"), "normal-file-name");
     }
 
     #[test]

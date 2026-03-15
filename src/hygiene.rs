@@ -124,30 +124,27 @@ pub fn sanitize_tag(tag: &str) -> String {
 
 pub fn sanitize_filename(title: &str) -> String {
     let sanitized: String = title
+        .to_lowercase()
         .chars()
-        .map(
-            |c| {
-                if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { ' ' }
-            },
-        )
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
         .collect();
 
-    // Collapse multiple spaces
+    // Collapse consecutive hyphens
     let mut result = String::new();
-    let mut prev_space = false;
+    let mut prev_hyphen = false;
     for c in sanitized.chars() {
-        if c == ' ' {
-            if !prev_space {
+        if c == '-' {
+            if !prev_hyphen {
                 result.push(c);
             }
-            prev_space = true;
+            prev_hyphen = true;
         } else {
             result.push(c);
-            prev_space = false;
+            prev_hyphen = false;
         }
     }
 
-    result.trim().to_string()
+    result.trim_matches('-').to_string()
 }
 
 #[cfg(test)]
@@ -319,21 +316,21 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename_basic() {
-        assert_eq!(sanitize_filename("Hello World!"), "Hello World");
+        assert_eq!(sanitize_filename("Hello World!"), "hello-world");
     }
 
     #[test]
     fn test_sanitize_filename_special() {
-        assert_eq!(sanitize_filename("Test: A/B \"quotes\""), "Test A B quotes");
+        assert_eq!(sanitize_filename("Test: A/B \"quotes\""), "test-a-b-quotes");
     }
 
     #[test]
     fn test_sanitize_filename_normal() {
-        assert_eq!(sanitize_filename("normal-file_name"), "normal-file_name");
+        assert_eq!(sanitize_filename("normal-file_name"), "normal-file-name");
     }
 
     #[test]
     fn test_sanitize_filename_collapses_spaces() {
-        assert_eq!(sanitize_filename("a:::b"), "a b");
+        assert_eq!(sanitize_filename("a:::b"), "a-b");
     }
 }
