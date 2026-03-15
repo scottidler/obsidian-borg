@@ -2,6 +2,7 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
+pub mod backoff;
 pub mod cli;
 pub mod config;
 pub mod dashboard;
@@ -129,9 +130,23 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
         );
     }
 
-    // If any task exits (error or completion), propagate
-    if let Some(result) = tasks.join_next().await {
-        result??;
+    // Monitor tasks: log failures but keep the daemon alive as long as HTTP is running
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok(())) => {
+                log::info!("A daemon task exited cleanly");
+            }
+            Ok(Err(e)) => {
+                log::error!("A daemon task failed: {e:#}");
+            }
+            Err(e) => {
+                if e.is_panic() {
+                    log::error!("A daemon task panicked: {e}");
+                } else {
+                    log::error!("A daemon task was cancelled: {e}");
+                }
+            }
+        }
     }
 
     Ok(())

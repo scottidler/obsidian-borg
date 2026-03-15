@@ -1,8 +1,9 @@
+use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, DiscordConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
 use crate::types::IngestMethod;
-use eyre::{Context, Result};
+use eyre::Result;
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::GatewayIntents;
@@ -32,17 +33,34 @@ impl EventHandler for Handler {
 }
 
 pub async fn run(token: String, dc_config: DiscordConfig, config: Arc<Config>) -> Result<()> {
-    let handler = Handler {
-        config,
-        channel_id: dc_config.channel_id,
-    };
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let mut backoff = ExponentialBackoff::new();
 
-    let mut client = serenity::Client::builder(&token, intents)
-        .event_handler(handler)
-        .await
-        .context("Failed to create Discord client")?;
+    loop {
+        log::info!("discord: starting bot");
+        let handler = Handler {
+            config: config.clone(),
+            channel_id: dc_config.channel_id,
+        };
+        let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
-    client.start().await.context("Discord client error")?;
-    Ok(())
+        let client = match serenity::Client::builder(&token, intents).event_handler(handler).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("discord: failed to create client: {e}");
+                backoff.wait().await;
+                continue;
+            }
+        };
+
+        backoff.reset();
+
+        let mut client = client;
+        if let Err(e) = client.start().await {
+            log::error!("discord: client error: {e}");
+        } else {
+            log::warn!("discord: client exited, will restart");
+        }
+
+        backoff.wait().await;
+    }
 }

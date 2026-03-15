@@ -26,6 +26,7 @@ tasks:
 
   ensure:
     help: "Fail if no tests exist"
+    before: [check]
     bash: |
       set -e
       set -o pipefail

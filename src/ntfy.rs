@@ -1,3 +1,4 @@
+use crate::backoff::ExponentialBackoff;
 use crate::config::Config;
 use crate::pipeline;
 use crate::router::extract_url_from_text;
@@ -5,7 +6,6 @@ use crate::types::IngestMethod;
 use eyre::Result;
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 use tokio_stream::StreamExt;
 
@@ -41,34 +41,6 @@ fn parse_message(message: &str) -> Option<(String, Vec<String>, bool)> {
 
     // Plain text: extract first URL
     extract_url_from_text(trimmed).map(|url| (url, vec![], false))
-}
-
-struct ExponentialBackoff {
-    attempt: u32,
-    base: Duration,
-    cap: Duration,
-}
-
-impl ExponentialBackoff {
-    fn new() -> Self {
-        Self {
-            attempt: 0,
-            base: Duration::from_secs(1),
-            cap: Duration::from_secs(30),
-        }
-    }
-
-    fn reset(&mut self) {
-        self.attempt = 0;
-    }
-
-    async fn wait(&mut self) {
-        let delay = self.base * 2u32.saturating_pow(self.attempt);
-        let delay = delay.min(self.cap);
-        self.attempt = self.attempt.saturating_add(1);
-        log::info!("ntfy: reconnecting in {delay:?} (attempt {})", self.attempt);
-        tokio::time::sleep(delay).await;
-    }
 }
 
 pub async fn run(server: String, topic: String, token: Option<String>, config: Arc<Config>) -> Result<()> {
@@ -210,21 +182,5 @@ mod tests {
     fn test_parse_invalid_json_falls_through_to_url_extraction() {
         let result = parse_message(r#"{"not_valid_json": }"#);
         assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_exponential_backoff_cap() {
-        let backoff = ExponentialBackoff::new();
-        // Verify cap is 30 seconds
-        assert_eq!(backoff.cap, Duration::from_secs(30));
-        assert_eq!(backoff.base, Duration::from_secs(1));
-    }
-
-    #[test]
-    fn test_exponential_backoff_reset() {
-        let mut backoff = ExponentialBackoff::new();
-        backoff.attempt = 5;
-        backoff.reset();
-        assert_eq!(backoff.attempt, 0);
     }
 }
