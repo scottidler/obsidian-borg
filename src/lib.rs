@@ -51,6 +51,8 @@ pub fn build_router(config: Arc<Config>) -> Router {
 }
 
 pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
+    log::info!("Starting obsidian-borg daemon");
+
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
         .context("Invalid server address")?;

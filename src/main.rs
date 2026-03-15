@@ -25,10 +25,7 @@ async fn main() -> Result<()> {
             Cli::parse_from(["obsidian-borg", "--help"]);
             Ok(())
         }
-        Some(Command::Daemon(opts)) => {
-            log::info!("Starting obsidian-borg with config from: {:?}", cli.config);
-            obsidian_borg::run_daemon(config, cli.verbose, opts).await
-        }
+        Some(Command::Daemon(opts)) => obsidian_borg::run_daemon(config, cli.verbose, opts).await,
         Some(Command::Ingest {
             url,
             clipboard,

@@ -6,6 +6,39 @@ use crate::types::IngestMethod;
 use eyre::Result;
 use std::sync::Arc;
 use teloxide::prelude::*;
+use teloxide::requests::Requester;
+use teloxide::types::AllowedUpdate;
+
+/// Claim the Telegram polling session by issuing a short getUpdates call.
+/// This invalidates any lingering long-poll from a previous process so the
+/// dispatcher doesn't hit TerminatedByOtherGetUpdates.
+async fn claim_polling_session(bot: &Bot) {
+    // offset -1 means "give me only the latest update", timeout 0 means return immediately.
+    // This forces Telegram to terminate any other active getUpdates connection.
+    match bot
+        .get_updates()
+        .offset(-1)
+        .timeout(0)
+        .allowed_updates(vec![AllowedUpdate::Message])
+        .await
+    {
+        Ok(updates) => {
+            // If we got an update, confirm it so it's not re-delivered
+            if let Some(last) = updates.last() {
+                let _ = bot
+                    .get_updates()
+                    .offset(last.id.as_offset())
+                    .timeout(0)
+                    .allowed_updates(vec![AllowedUpdate::Message])
+                    .await;
+            }
+            log::info!("telegram: claimed polling session");
+        }
+        Err(e) => {
+            log::warn!("telegram: failed to claim polling session: {e}");
+        }
+    }
+}
 
 pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) -> Result<()> {
     let mut backoff = ExponentialBackoff::new();
@@ -27,11 +60,10 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
             }
         }
 
-        // Force-terminate any stale polling session from a previous instance
-        // (prevents TerminatedByOtherGetUpdates on daemon restart)
-        if let Err(e) = bot.delete_webhook().drop_pending_updates(true).await {
-            log::warn!("telegram: failed to drop pending updates: {e}");
-        }
+        // Steal the polling session from any previous instance before starting
+        // the dispatcher. Without this, the first getUpdates from dispatch()
+        // races with a lingering long-poll and triggers TerminatedByOtherGetUpdates.
+        claim_polling_session(&bot).await;
 
         let tg = tg_config.clone();
         let cfg = config.clone();
