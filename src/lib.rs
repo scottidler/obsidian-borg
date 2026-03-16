@@ -46,6 +46,7 @@ pub fn build_router(config: Arc<Config>) -> Router {
     Router::new()
         .route("/health", get(routes::health))
         .route("/ingest", post(routes::ingest))
+        .route("/note", post(routes::note))
         .layer(cors)
         .with_state(config)
 }
@@ -173,6 +174,49 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+pub fn resolve_note_text(text: Option<String>, clipboard: bool) -> Result<String> {
+    if let Some(text) = text {
+        return Ok(text);
+    }
+    if clipboard {
+        let mut board = arboard::Clipboard::new().context("Failed to access clipboard")?;
+        let text = board.get_text().context("Clipboard is empty or not text")?;
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            eyre::bail!("Clipboard is empty");
+        }
+        return Ok(text);
+    }
+    eyre::bail!("No text provided. Use a text argument or --clipboard")
+}
+
+pub async fn run_note(config: Config, text: String, tags: Option<Vec<String>>) -> Result<()> {
+    let content = types::ContentKind::Text(text);
+    let result = pipeline::process_content(
+        content,
+        tags.unwrap_or_default(),
+        types::IngestMethod::Cli,
+        false,
+        &config,
+    )
+    .await;
+
+    match &result.status {
+        types::IngestStatus::Completed => {
+            let title = result.title.as_deref().unwrap_or("Untitled");
+            let path = result.note_path.as_deref().unwrap_or("unknown");
+            println!("Captured: \"{title}\" -> {path}");
+        }
+        types::IngestStatus::Failed { reason } => {
+            eprintln!("Error: {reason}");
+            std::process::exit(1);
+        }
+        _ => {}
     }
 
     Ok(())

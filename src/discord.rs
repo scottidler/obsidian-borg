@@ -22,14 +22,25 @@ impl EventHandler for Handler {
             return;
         }
 
-        let Some(url) = extract_url_from_text(&msg.content) else {
+        let (content, display_source) = if let Some(url) = extract_url_from_text(&msg.content) {
+            (ContentKind::Url(url.clone()), url)
+        } else if !msg.content.trim().is_empty() {
+            let display = if msg.content.len() > 50 {
+                format!("{}...", &msg.content[..50])
+            } else {
+                msg.content.clone()
+            };
+            (ContentKind::Text(msg.content.clone()), display)
+        } else {
             return;
         };
 
         let _ = msg.channel_id.say(&ctx.http, "Processing...").await;
-        let content = ContentKind::Url(url.clone());
         let result = pipeline::process_content(content, vec![], IngestMethod::Discord, false, &self.config).await;
-        let _ = msg.channel_id.say(&ctx.http, format_reply(&result, &url)).await;
+        let _ = msg
+            .channel_id
+            .say(&ctx.http, format_reply(&result, &display_source))
+            .await;
     }
 }
 

@@ -121,13 +121,7 @@ pub async fn process_content(
             method: Some(method),
             ..Default::default()
         },
-        ContentKind::Text(_) => IngestResult {
-            status: IngestStatus::Failed {
-                reason: "Text ingestion not yet implemented".to_string(),
-            },
-            method: Some(method),
-            ..Default::default()
-        },
+        ContentKind::Text(text) => process_text(&text, tags, method, force, config).await,
         ContentKind::Document { .. } => IngestResult {
             status: IngestStatus::Failed {
                 reason: "Document ingestion not yet implemented".to_string(),
@@ -523,6 +517,418 @@ async fn process_article_jina(url: &str) -> Result<(String, String, ContentType)
     Ok((title, article_md, ContentType::Article))
 }
 
+/// Detect structured text patterns before LLM classification.
+#[derive(Debug, PartialEq)]
+enum TextPattern {
+    Define { word: String },
+    Clarify { word_a: String, word_b: String },
+    ContainsUrl(String),
+    General,
+}
+
+fn detect_text_pattern(text: &str) -> TextPattern {
+    let trimmed = text.trim();
+
+    // Check for define: pattern
+    if let Some(word) = trimmed
+        .strip_prefix("define:")
+        .or_else(|| trimmed.strip_prefix("Define:"))
+        .map(|w| w.trim().to_string())
+        && !word.is_empty()
+    {
+        return TextPattern::Define { word };
+    }
+
+    // Check for clarify: <word> vs <word> pattern
+    if let Some(rest) = trimmed
+        .strip_prefix("clarify:")
+        .or_else(|| trimmed.strip_prefix("Clarify:"))
+        .map(|w| w.trim())
+        && let Some((a, b)) = rest.split_once(" vs ")
+    {
+        let word_a = a.trim().to_string();
+        let word_b = b.trim().to_string();
+        if !word_a.is_empty() && !word_b.is_empty() {
+            return TextPattern::Clarify { word_a, word_b };
+        }
+    }
+
+    // Check if text contains a URL (redirect to URL pipeline)
+    if let Some(url) = router::extract_url_from_text(trimmed) {
+        // Only redirect if the text IS essentially just a URL
+        let without_url = trimmed.replace(&url, "").trim().to_string();
+        if without_url.is_empty() || without_url.len() < 10 {
+            return TextPattern::ContainsUrl(url);
+        }
+    }
+
+    TextPattern::General
+}
+
+async fn process_text(
+    text: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    force: bool,
+    config: &Config,
+) -> IngestResult {
+    let start = Instant::now();
+    match process_text_inner(text, tags, method, force, config).await {
+        Ok(mut result) => {
+            let elapsed = start.elapsed();
+            log::info!("Text pipeline completed in {elapsed:.2?}");
+            result.elapsed_secs = Some(elapsed.as_secs_f64());
+            result
+        }
+        Err(e) => {
+            let elapsed = start.elapsed();
+            log::error!("Text pipeline failed in {elapsed:.2?}: {e:?}");
+            IngestResult {
+                status: IngestStatus::Failed {
+                    reason: format!("{:#}", e),
+                },
+                method: Some(method),
+                elapsed_secs: Some(elapsed.as_secs_f64()),
+                ..Default::default()
+            }
+        }
+    }
+}
+
+async fn process_text_inner(
+    text: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    force: bool,
+    config: &Config,
+) -> Result<IngestResult> {
+    let pattern = detect_text_pattern(text);
+    log::debug!("Text pattern detected: {pattern:?}");
+
+    match pattern {
+        TextPattern::ContainsUrl(url) => {
+            // Redirect to URL pipeline
+            return Ok(process_url(&url, tags, method, force, config).await);
+        }
+        TextPattern::Define { .. } | TextPattern::Clarify { .. } => {
+            return process_vocab(text, &pattern, tags, method, force, config).await;
+        }
+        TextPattern::General => {}
+    }
+
+    // General text: classify via LLM, then create a note
+    let tz: chrono_tz::Tz = config
+        .frontmatter
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::America::Los_Angeles);
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let log_date = now.format("%Y-%m-%d").to_string();
+    let log_time = now.format("%H:%M").to_string();
+
+    let use_fabric = fabric::is_available(&config.fabric);
+
+    // Generate title from text (first line or LLM-generated)
+    let title = generate_text_title(text, use_fabric, config).await;
+
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
+
+    // Generate tags via Fabric
+    if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(text, &config.fabric).await {
+        all_tags.extend(fabric_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+    }
+    all_tags.sort();
+    all_tags.dedup();
+
+    // Route via LLM classification
+    let folder = if use_fabric {
+        match fabric::classify_topic(&title, text, &config.fabric).await {
+            Ok(result) if result.confidence >= config.routing.confidence_threshold => {
+                log::info!(
+                    "Text routing: LLM classified -> {} (confidence: {:.2})",
+                    result.folder,
+                    result.confidence
+                );
+                all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+                all_tags.sort();
+                all_tags.dedup();
+                result.folder
+            }
+            _ => config.routing.fallback_folder.clone(),
+        }
+    } else {
+        config.routing.fallback_folder.clone()
+    };
+
+    let note = NoteContent {
+        title: title.clone(),
+        source_url: None,
+        asset_path: None,
+        tags: all_tags.clone(),
+        summary: text.to_string(),
+        content_type: ContentType::Note,
+        embed_code: None,
+        method: Some(method),
+    };
+
+    let rendered = markdown::render_note(&note, &config.frontmatter);
+    let filename = format!("{}.md", hygiene::sanitize_filename(&title));
+
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
+
+    let note_path = dest_path.join(&filename);
+    std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
+
+    log::info!("Wrote text note: {} (folder: {})", note_path.display(), folder);
+
+    // Log to ledger
+    let ledger_file = ledger::ledger_path(config);
+    let source_display = format!(
+        "[text: {}]",
+        if text.len() > 50 { format!("{}...", &text[..50]) } else { text.to_string() }
+    );
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
+            date: log_date,
+            time: log_time,
+            method,
+            status: LedgerStatus::Completed,
+            title: Some(title.clone()),
+            source: source_display,
+            folder: Some(folder.clone()),
+        },
+    )?;
+
+    Ok(IngestResult {
+        status: IngestStatus::Completed,
+        note_path: Some(note_path.to_string_lossy().to_string()),
+        title: Some(title),
+        tags: all_tags,
+        elapsed_secs: None,
+        folder: Some(folder),
+        method: Some(method),
+        canonical_url: None,
+    })
+}
+
+async fn process_vocab(
+    text: &str,
+    pattern: &TextPattern,
+    tags: Vec<String>,
+    method: IngestMethod,
+    _force: bool,
+    config: &Config,
+) -> Result<IngestResult> {
+    let tz: chrono_tz::Tz = config
+        .frontmatter
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::America::Los_Angeles);
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let log_date = now.format("%Y-%m-%d").to_string();
+    let log_time = now.format("%H:%M").to_string();
+
+    let use_fabric = fabric::is_available(&config.fabric);
+
+    let (title, content_type, body, folder) = match pattern {
+        TextPattern::Define { word } => {
+            // Generate definition via LLM
+            let body = if use_fabric {
+                let prompt = format!(
+                    "Define the word \"{word}\". Determine what language it is. \
+                     Provide: 1) The definition 2) Example sentences. \
+                     Format as markdown with ## Examples section."
+                );
+                fabric::run_pattern("summarize", &prompt, &config.fabric)
+                    .await
+                    .unwrap_or_else(|_| format!("definition:: [define: {word}]"))
+            } else {
+                format!("definition:: [define: {word}]")
+            };
+
+            // Detect language (simple heuristic: ask LLM or check common patterns)
+            let language = detect_language(word, use_fabric, config).await;
+            let folder = resolve_vocab_folder(&language, &config.text_capture);
+
+            (
+                word.clone(),
+                ContentType::VocabDefine {
+                    word: word.clone(),
+                    language: language.clone(),
+                },
+                body,
+                folder,
+            )
+        }
+        TextPattern::Clarify { word_a, word_b } => {
+            let title = format!("{word_a} vs {word_b}");
+            let body = if use_fabric {
+                let prompt = format!(
+                    "Compare and clarify the difference between \"{word_a}\" and \"{word_b}\". \
+                     Determine what language they are. \
+                     Provide: definitions, usage contexts, examples, and common confusions. \
+                     Format as markdown."
+                );
+                fabric::run_pattern("summarize", &prompt, &config.fabric)
+                    .await
+                    .unwrap_or_else(|_| format!("[clarify: {word_a} vs {word_b}]"))
+            } else {
+                format!("[clarify: {word_a} vs {word_b}]")
+            };
+
+            let language = detect_language(word_a, use_fabric, config).await;
+            let folder = resolve_vocab_folder(&language, &config.text_capture);
+
+            (
+                title,
+                ContentType::VocabClarify {
+                    word_a: word_a.clone(),
+                    word_b: word_b.clone(),
+                    language: language.clone(),
+                },
+                body,
+                folder,
+            )
+        }
+        _ => unreachable!("process_vocab called with non-vocab pattern"),
+    };
+
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
+    let vocab_tag = match &content_type {
+        ContentType::VocabDefine { language, .. } | ContentType::VocabClarify { language, .. } => {
+            format!("{language}-vocab")
+        }
+        _ => "vocab".to_string(),
+    };
+    all_tags.push(hygiene::sanitize_tag(&vocab_tag));
+    all_tags.sort();
+    all_tags.dedup();
+
+    let note = NoteContent {
+        title: title.clone(),
+        source_url: None,
+        asset_path: None,
+        tags: all_tags.clone(),
+        summary: body,
+        content_type,
+        embed_code: None,
+        method: Some(method),
+    };
+
+    let rendered = markdown::render_note(&note, &config.frontmatter);
+    let filename = format!("{}.md", hygiene::sanitize_filename(&title));
+
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
+
+    let note_path = dest_path.join(&filename);
+    std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
+
+    log::info!("Wrote vocab note: {} (folder: {})", note_path.display(), folder);
+
+    // Log to ledger
+    let ledger_file = ledger::ledger_path(config);
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
+            date: log_date,
+            time: log_time,
+            method,
+            status: LedgerStatus::Completed,
+            title: Some(title.clone()),
+            source: format!("[{}]", text.trim()),
+            folder: Some(folder.clone()),
+        },
+    )?;
+
+    Ok(IngestResult {
+        status: IngestStatus::Completed,
+        note_path: Some(note_path.to_string_lossy().to_string()),
+        title: Some(title),
+        tags: all_tags,
+        elapsed_secs: None,
+        folder: Some(folder),
+        method: Some(method),
+        canonical_url: None,
+    })
+}
+
+/// Generate a title from text input.
+async fn generate_text_title(text: &str, use_fabric: bool, config: &Config) -> String {
+    // Use first line as title if it's short enough
+    let first_line = text.lines().next().unwrap_or(text).trim();
+    if !first_line.is_empty() && first_line.len() <= 80 {
+        return first_line.to_string();
+    }
+
+    // Try LLM to generate a title
+    if use_fabric
+        && let Ok(title) = fabric::run_pattern(
+            "summarize",
+            &format!("Generate a very short (3-8 word) title for this text:\n\n{text}"),
+            &config.fabric,
+        )
+        .await
+    {
+        let title = title.lines().next().unwrap_or(&title).trim().to_string();
+        if !title.is_empty() && title.len() <= 100 {
+            return title;
+        }
+    }
+
+    // Fallback: truncate first line
+    if first_line.len() > 80 {
+        format!("{}...", &first_line[..77])
+    } else {
+        "Quick Note".to_string()
+    }
+}
+
+/// Detect language of a word (simple heuristic, can be enhanced with LLM).
+async fn detect_language(word: &str, use_fabric: bool, config: &Config) -> String {
+    if use_fabric
+        && let Ok(result) = fabric::run_pattern(
+            "summarize",
+            &format!(
+                "What language is the word \"{word}\"? Reply with just the language name \
+                 in lowercase (e.g., \"english\", \"spanish\", \"french\"). Nothing else."
+            ),
+            &config.fabric,
+        )
+        .await
+    {
+        let lang = result.trim().to_lowercase();
+        // Accept reasonable language names
+        if !lang.is_empty() && lang.len() < 20 && !lang.contains(' ') {
+            return lang;
+        }
+    }
+
+    // Fallback: assume English
+    "english".to_string()
+}
+
+fn resolve_vocab_folder(language: &str, text_capture: &crate::config::TextCaptureConfig) -> String {
+    text_capture
+        .vocab_folders
+        .get(language)
+        .or_else(|| text_capture.vocab_folders.get("default"))
+        .cloned()
+        .unwrap_or_else(|| "🧠 Knowledge/vocab".to_string())
+}
+
 fn resolve_destination(
     root_path: &str,
     inbox_path: &str,
@@ -558,6 +964,89 @@ fn expand_tilde(path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_detect_text_pattern_define() {
+        assert_eq!(
+            detect_text_pattern("define: garrulous"),
+            TextPattern::Define {
+                word: "garrulous".to_string()
+            }
+        );
+        assert_eq!(
+            detect_text_pattern("Define: escurrir"),
+            TextPattern::Define {
+                word: "escurrir".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_detect_text_pattern_clarify() {
+        assert_eq!(
+            detect_text_pattern("clarify: affect vs effect"),
+            TextPattern::Clarify {
+                word_a: "affect".to_string(),
+                word_b: "effect".to_string()
+            }
+        );
+        assert_eq!(
+            detect_text_pattern("Clarify: escurrir vs estrujar"),
+            TextPattern::Clarify {
+                word_a: "escurrir".to_string(),
+                word_b: "estrujar".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_detect_text_pattern_url() {
+        match detect_text_pattern("https://example.com") {
+            TextPattern::ContainsUrl(url) => assert_eq!(url, "https://example.com"),
+            other => panic!("expected ContainsUrl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_detect_text_pattern_url_with_short_context() {
+        // URL with very short surrounding text should still be treated as URL
+        match detect_text_pattern("check https://example.com") {
+            TextPattern::ContainsUrl(url) => assert_eq!(url, "https://example.com"),
+            other => panic!("expected ContainsUrl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_detect_text_pattern_general() {
+        assert_eq!(
+            detect_text_pattern("Met James at the Rust meetup"),
+            TextPattern::General
+        );
+    }
+
+    #[test]
+    fn test_detect_text_pattern_empty_define() {
+        // "define:" with no word should not match
+        assert_eq!(detect_text_pattern("define: "), TextPattern::General);
+    }
+
+    #[test]
+    fn test_resolve_vocab_folder_english() {
+        let config = crate::config::TextCaptureConfig::default();
+        assert_eq!(resolve_vocab_folder("english", &config), "🧠 Knowledge/english-vocab");
+    }
+
+    #[test]
+    fn test_resolve_vocab_folder_spanish() {
+        let config = crate::config::TextCaptureConfig::default();
+        assert_eq!(resolve_vocab_folder("spanish", &config), "🇪🇸 Spanish/vocabulary");
+    }
+
+    #[test]
+    fn test_resolve_vocab_folder_unknown() {
+        let config = crate::config::TextCaptureConfig::default();
+        assert_eq!(resolve_vocab_folder("french", &config), "🧠 Knowledge/vocab");
+    }
 
     #[test]
     fn test_expand_tilde() {
@@ -683,16 +1172,7 @@ mod tests {
         .await;
         assert!(matches!(result.status, IngestStatus::Failed { .. }));
 
-        // Text
-        let result = super::process_content(
-            ContentKind::Text("some note text".to_string()),
-            vec![],
-            IngestMethod::Cli,
-            false,
-            &config,
-        )
-        .await;
-        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+        // Text is now implemented (Phase 2), tested separately
 
         // Document
         let result = super::process_content(

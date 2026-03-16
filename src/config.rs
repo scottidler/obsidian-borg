@@ -178,6 +178,7 @@ pub struct Config {
     pub hotkey: HotkeyConfig,
     pub canonicalization: CanonicalConfig,
     pub migration: MigrationConfig,
+    pub text_capture: TextCaptureConfig,
     pub log_level: Option<String>,
     pub debug: bool,
 }
@@ -190,6 +191,26 @@ pub struct MigrationConfig {
     pub title_fallback: bool,
     pub seed_borg_log: bool,
     pub skip_folders: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TextCaptureConfig {
+    pub vocab_folders: std::collections::HashMap<String, String>,
+    pub code_folder: String,
+}
+
+impl Default for TextCaptureConfig {
+    fn default() -> Self {
+        let mut vocab_folders = std::collections::HashMap::new();
+        vocab_folders.insert("english".to_string(), "🧠 Knowledge/english-vocab".to_string());
+        vocab_folders.insert("spanish".to_string(), "🇪🇸 Spanish/vocabulary".to_string());
+        vocab_folders.insert("default".to_string(), "🧠 Knowledge/vocab".to_string());
+        Self {
+            vocab_folders,
+            code_folder: "🤖 Tech/snippets".to_string(),
+        }
+    }
 }
 
 fn default_links() -> Vec<LinkConfig> {

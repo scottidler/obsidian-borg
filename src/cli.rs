@@ -47,6 +47,17 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Quick text capture - create a note from text
+    Note {
+        /// Text to capture (omit when using --clipboard)
+        text: Option<String>,
+        /// Read text from system clipboard
+        #[arg(long)]
+        clipboard: bool,
+        /// Comma-separated tags
+        #[arg(short, long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+    },
     /// Install/uninstall a keyboard shortcut to ingest URLs from clipboard
     Hotkey(HotkeyOpts),
     /// Sign the browser extension for Firefox (AMO)
@@ -382,6 +393,44 @@ mod tests {
                 assert_eq!(opts.key, "<Super>b");
             }
             _ => panic!("expected Hotkey"),
+        }
+    }
+
+    #[test]
+    fn test_note_subcommand() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "note", "Met James at the Rust meetup"]).expect("parse");
+        match cli.command {
+            Some(Command::Note { text, clipboard, tags }) => {
+                assert_eq!(text, Some("Met James at the Rust meetup".to_string()));
+                assert!(!clipboard);
+                assert!(tags.is_none());
+            }
+            _ => panic!("expected Note"),
+        }
+    }
+
+    #[test]
+    fn test_note_with_tags() {
+        let cli =
+            Cli::try_parse_from(["obsidian-borg", "note", "define: garrulous", "-t", "vocab,english"]).expect("parse");
+        match cli.command {
+            Some(Command::Note { text, tags, .. }) => {
+                assert_eq!(text, Some("define: garrulous".to_string()));
+                assert_eq!(tags, Some(vec!["vocab".to_string(), "english".to_string()]));
+            }
+            _ => panic!("expected Note"),
+        }
+    }
+
+    #[test]
+    fn test_note_clipboard() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "note", "--clipboard"]).expect("parse");
+        match cli.command {
+            Some(Command::Note { text, clipboard, .. }) => {
+                assert!(text.is_none());
+                assert!(clipboard);
+            }
+            _ => panic!("expected Note"),
         }
     }
 

@@ -40,6 +40,10 @@ async fn main() -> Result<()> {
             };
             obsidian_borg::run_ingest(config, resolved_url, tags, force, clipboard, method).await
         }
+        Some(Command::Note { text, clipboard, tags }) => {
+            let resolved_text = obsidian_borg::resolve_note_text(text, clipboard)?;
+            obsidian_borg::run_note(config, resolved_text, tags).await
+        }
         Some(Command::Hotkey(opts)) => obsidian_borg::run_hotkey(opts, &config).await,
         Some(Command::Sign) => obsidian_borg::run_sign(&config).await,
         Some(Command::Migrate { dry_run: _, apply }) => obsidian_borg::migrate::run_migrate(&config, apply).await,

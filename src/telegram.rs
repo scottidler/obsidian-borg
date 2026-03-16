@@ -78,23 +78,29 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
 
                 let text = message.text().unwrap_or("");
                 log::debug!("Telegram message from chat {}: {text}", message.chat.id);
-                let Some(url) = extract_url_from_text(text) else {
-                    log::debug!("No URL found in message");
-                    bot.send_message(message.chat.id, "No URL found in message.").await?;
+
+                // Determine content kind: URL or plain text
+                let (content, display_source) = if let Some(url) = extract_url_from_text(text) {
+                    log::info!("Telegram: processing URL {url} from chat {}", message.chat.id);
+                    (ContentKind::Url(url.clone()), url)
+                } else if !text.trim().is_empty() {
+                    log::info!("Telegram: processing text from chat {}", message.chat.id);
+                    let display = if text.len() > 50 { format!("{}...", &text[..50]) } else { text.to_string() };
+                    (ContentKind::Text(text.to_string()), display)
+                } else {
+                    log::debug!("Empty message, ignoring");
                     return Ok(());
                 };
 
-                log::info!("Telegram: processing URL {url} from chat {}", message.chat.id);
                 bot.send_message(message.chat.id, "Processing...").await?;
 
                 let chat_id = message.chat.id;
                 let bot_clone = bot.clone();
                 tokio::spawn(async move {
-                    let content = ContentKind::Url(url.clone());
                     let result =
                         pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
                     log::debug!("Pipeline result: {:?}", result.status);
-                    let reply = format_reply(&result, &url);
+                    let reply = format_reply(&result, &display_source);
                     if let Err(e) = bot_clone.send_message(chat_id, reply).await {
                         log::error!("Failed to send Telegram reply: {e}");
                     }
