@@ -218,7 +218,7 @@ tasks:
       fi
 
       # Remote hosts to deploy to (SSH alias or hostname)
-      REMOTE_HOSTS="${DEPLOY_HOSTS:-lappy}"
+      REMOTE_HOSTS="${DEPLOY_HOSTS:-ltl-7007.lan}"
       REPO_PATH="repos/scottidler/obsidian-borg"
 
       for host in $REMOTE_HOSTS; do
