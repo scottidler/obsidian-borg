@@ -131,7 +131,6 @@ pub async fn process_url(
                     status: LedgerStatus::Failed,
                     title: None,
                     source: canonical.clone(),
-                    original: url.to_string(),
                     folder: None,
                 },
             );
@@ -162,6 +161,9 @@ async fn process_url_inner(
     // Normalize URL (clean + canonicalize) before classification
     let canonical = hygiene::normalize_url(url, &config.canonicalization.rules)?;
     log::debug!("Canonical URL: {canonical}");
+    if canonical != url {
+        log::info!("URL canonicalized: {url} -> {canonical}");
+    }
 
     // Get timezone for log timestamps
     let tz: chrono_tz::Tz = config
@@ -190,8 +192,7 @@ async fn process_url_inner(
                         status: LedgerStatus::Skipped,
                         title: None,
                         source: canonical.clone(),
-                        original: url.to_string(),
-                        folder: None,
+                            folder: None,
                     },
                 )?;
                 return Ok(IngestResult {
@@ -219,7 +220,6 @@ async fn process_url_inner(
                     status: LedgerStatus::Skipped,
                     title: None,
                     source: canonical.clone(),
-                    original: url.to_string(),
                     folder: None,
                 },
             )?;
@@ -358,7 +358,6 @@ async fn process_url_inner(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: canonical.clone(),
-            original: url.to_string(),
             folder: Some(folder.clone()),
         },
     )?;

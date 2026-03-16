@@ -29,7 +29,6 @@ pub struct LedgerEntry {
     pub status: LedgerStatus,
     pub title: Option<String>,
     pub source: String,
-    pub original: String,
     pub folder: Option<String>,
 }
 
@@ -45,8 +44,8 @@ tags:
 
 All URLs ingested by obsidian-borg. This file is machine-maintained — do not edit the table manually.
 
-| Date | Time | Method | Status | Title | Source | Original | Folder |
-|------|------|--------|--------|-------|--------|----------|--------|
+| Date | Time | Method | Status | Title | Source | Folder |
+|------|------|--------|--------|-------|--------|--------|
 "#;
 
 /// Resolve the Borg Ledger path from config.
@@ -91,8 +90,8 @@ pub fn check_duplicate(ledger_path: &Path, canonical_url: &str) -> Result<Option
             continue;
         }
         let cols: Vec<&str> = line.split('|').collect();
-        // Expected: ["", " Date ", " Time ", " Method ", " Status ", " Title ", " Source ", " Original ", " Folder ", ""]
-        if cols.len() < 9 {
+        // Expected: ["", " Date ", " Time ", " Method ", " Status ", " Title ", " Source ", " Folder ", ""]
+        if cols.len() < 8 {
             continue;
         }
         let status = cols[4].trim();
@@ -124,8 +123,8 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
     let folder_display = entry.folder.as_deref().unwrap_or("—");
 
     let row = format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
-        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, entry.original, folder_display,
+        "| {} | {} | {} | {} | {} | {} | {} |\n",
+        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, folder_display,
     );
 
     use std::io::Write;
@@ -215,7 +214,6 @@ mod tests {
             status: LedgerStatus::Completed,
             title: Some("Test Article".to_string()),
             source: "https://example.com/article".to_string(),
-            original: "https://example.com/article?utm_source=x".to_string(),
             folder: Some("📥 Inbox".to_string()),
         };
         append_entry(&path, &entry).expect("append");
@@ -243,7 +241,6 @@ mod tests {
             status: LedgerStatus::Failed,
             title: None,
             source: "https://example.com/broken".to_string(),
-            original: "https://example.com/broken".to_string(),
             folder: None,
         };
         append_entry(&path, &entry).expect("append");
@@ -267,7 +264,6 @@ mod tests {
             status: LedgerStatus::Skipped,
             title: None,
             source: "https://example.com/dup".to_string(),
-            original: "https://example.com/dup".to_string(),
             folder: None,
         };
         append_entry(&path, &entry).expect("append");

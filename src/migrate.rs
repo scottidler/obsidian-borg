@@ -138,7 +138,6 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
                 status: LedgerStatus::Completed,
                 title: fm.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 source: source.to_string(),
-                original: source.to_string(),
                 folder: path
                     .parent()
                     .and_then(|p| p.strip_prefix(&vault_root).ok())
