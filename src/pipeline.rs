@@ -1309,6 +1309,11 @@ async fn process_text_inner(
         TextPattern::General => {}
     }
 
+    // Code snippet detection (after pattern matching / URL redirect, before general LLM classification)
+    if let Some(language) = looks_like_code(text) {
+        return process_code_snippet(text, &language, tags, method, config).await;
+    }
+
     // General text: classify via LLM, then create a note
     let tz: chrono_tz::Tz = config
         .frontmatter
@@ -1589,6 +1594,377 @@ async fn generate_text_title(text: &str, use_fabric: bool, config: &Config) -> S
     }
 }
 
+/// Detect whether text looks like a code snippet and return the detected language.
+///
+/// Uses a high threshold to avoid false positives on plain text. Requires at least
+/// 3 lines and 2+ code indicators to trigger.
+fn looks_like_code(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+
+    // Must have at least 3 lines
+    if lines.len() < 3 {
+        return None;
+    }
+
+    // Check for shebang line first - strong signal
+    if let Some(first) = lines.first() {
+        let first = first.trim();
+        if first.starts_with("#!") {
+            if first.contains("python") {
+                return Some("python".to_string());
+            } else if first.contains("bash") || first.contains("/sh") || first.contains("zsh") {
+                return Some("bash".to_string());
+            } else if first.contains("node") {
+                return Some("javascript".to_string());
+            } else if first.contains("ruby") {
+                return Some("ruby".to_string());
+            } else if first.contains("perl") {
+                return Some("perl".to_string());
+            }
+            // Shebang but unknown interpreter - still code
+            return Some(String::new());
+        }
+    }
+
+    // Count code indicators
+    let mut indicators = 0u32;
+
+    // Language-specific keyword markers (counted per unique marker type found)
+    let rust_markers = ["fn ", "pub fn", "async fn", "impl ", "use ", "let mut ", "mod "];
+    let python_markers = ["def ", "import ", "from ", "class ", "elif ", "except "];
+    let js_markers = ["function ", "const ", "===", "!==", "=> {", "require(", "export "];
+    let go_markers = ["func ", "package ", "import (", "go func", "defer "];
+    let c_markers = ["#include", "int main", "void ", "printf(", "malloc("];
+    let general_markers = ["return ", "if (", "for (", "while (", "switch ("];
+
+    let mut rust_score = 0u32;
+    let mut python_score = 0u32;
+    let mut js_score = 0u32;
+    let mut go_score = 0u32;
+    let mut c_score = 0u32;
+
+    for marker in &rust_markers {
+        if text.contains(marker) {
+            rust_score += 1;
+            indicators += 1;
+        }
+    }
+    for marker in &python_markers {
+        if text.contains(marker) {
+            python_score += 1;
+            indicators += 1;
+        }
+    }
+    for marker in &js_markers {
+        if text.contains(marker) {
+            js_score += 1;
+            indicators += 1;
+        }
+    }
+    for marker in &go_markers {
+        if text.contains(marker) {
+            go_score += 1;
+            indicators += 1;
+        }
+    }
+    for marker in &c_markers {
+        if text.contains(marker) {
+            c_score += 1;
+            indicators += 1;
+        }
+    }
+    for marker in &general_markers {
+        if text.contains(marker) {
+            indicators += 1;
+        }
+    }
+
+    // Structural indicators
+    // Lines with consistent indentation (2+ spaces or tabs)
+    let indented_lines = lines
+        .iter()
+        .filter(|l| !l.is_empty() && (l.starts_with("  ") || l.starts_with('\t')))
+        .count();
+    if indented_lines >= 2 {
+        indicators += 1;
+    }
+
+    // Bracket/brace patterns typical of code
+    let has_braces = text.contains('{') && text.contains('}');
+    let has_arrow = text.contains("->") || text.contains("=>");
+    let has_scope_op = text.contains("::");
+    let has_logical_ops = text.contains("||") || text.contains("&&");
+    let has_semicolons = text.matches(';').count() >= 2;
+
+    if has_braces {
+        indicators += 1;
+    }
+    if has_arrow {
+        indicators += 1;
+    }
+    if has_scope_op {
+        indicators += 1;
+    }
+    if has_logical_ops {
+        indicators += 1;
+    }
+    if has_semicolons {
+        indicators += 1;
+    }
+
+    // Count structural indicators separately
+    let structural_count = has_braces as u32
+        + has_arrow as u32
+        + has_scope_op as u32
+        + has_logical_ops as u32
+        + has_semicolons as u32
+        + (indented_lines >= 2) as u32;
+
+    // Require at least 2 code indicators AND at least 1 structural indicator.
+    // This prevents plain English with words like "import", "class", "function" from triggering.
+    if indicators < 2 || structural_count == 0 {
+        return None;
+    }
+
+    // Determine language by highest score
+    let max_score = rust_score.max(python_score).max(js_score).max(go_score).max(c_score);
+    if max_score == 0 {
+        // Indicators came from structural patterns only - not confident enough
+        // unless there are many structural indicators (4+)
+        if indicators >= 4 {
+            return Some(String::new());
+        }
+        return None;
+    }
+
+    let language = if rust_score == max_score && rust_score >= 2 {
+        "rust"
+    } else if python_score == max_score && python_score >= 2 {
+        "python"
+    } else if js_score == max_score && js_score >= 2 {
+        "javascript"
+    } else if go_score == max_score && go_score >= 2 {
+        "go"
+    } else if c_score == max_score && c_score >= 2 {
+        "c"
+    } else {
+        // Some language indicators but not enough to be confident about which
+        ""
+    };
+
+    Some(language.to_string())
+}
+
+/// Generate a title for a code snippet.
+///
+/// Tries to extract a meaningful name from:
+/// 1. First comment line
+/// 2. First function/class definition
+/// 3. LLM-generated title
+/// 4. Fallback: "Code Snippet"
+async fn generate_code_title(text: &str, language: &str, use_fabric: bool, config: &Config) -> String {
+    // Try first comment line
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip shebang
+        if trimmed.starts_with("#!") {
+            continue;
+        }
+        // Single-line comments
+        let comment = if trimmed.starts_with("//") {
+            Some(trimmed.trim_start_matches('/').trim())
+        } else if trimmed.starts_with('#') && !trimmed.starts_with("#!") && !trimmed.starts_with("#include") {
+            Some(trimmed.trim_start_matches('#').trim())
+        } else if trimmed.starts_with("/*") || trimmed.starts_with("/**") {
+            Some(
+                trimmed
+                    .trim_start_matches('/')
+                    .trim_start_matches('*')
+                    .trim_end_matches('*')
+                    .trim_end_matches('/')
+                    .trim(),
+            )
+        } else {
+            None
+        };
+        if let Some(c) = comment
+            && !c.is_empty()
+            && c.len() <= 80
+        {
+            return c.to_string();
+        }
+        break;
+    }
+
+    // Try first function/class name
+    for line in text.lines() {
+        let trimmed = line.trim();
+        // Rust: fn name, pub fn name
+        if let Some(rest) = trimmed.strip_prefix("fn ").or_else(|| {
+            trimmed
+                .strip_prefix("pub fn ")
+                .or_else(|| trimmed.strip_prefix("async fn "))
+                .or_else(|| trimmed.strip_prefix("pub async fn "))
+        }) && let Some(name) = rest.split('(').next()
+        {
+            let name = name.trim();
+            if !name.is_empty() {
+                return format!("{language} - {name}").trim_start_matches(" - ").to_string();
+            }
+        }
+        // Python: def name
+        if let Some(rest) = trimmed.strip_prefix("def ")
+            && let Some(name) = rest.split('(').next()
+        {
+            let name = name.trim();
+            if !name.is_empty() {
+                return format!("{language} - {name}").trim_start_matches(" - ").to_string();
+            }
+        }
+        // Go/JS: func name / function name
+        if let Some(rest) = trimmed
+            .strip_prefix("func ")
+            .or_else(|| trimmed.strip_prefix("function "))
+            && let Some(name) = rest.split('(').next()
+        {
+            let name = name.trim();
+            if !name.is_empty() {
+                return format!("{language} - {name}").trim_start_matches(" - ").to_string();
+            }
+        }
+        // class
+        if let Some(rest) = trimmed.strip_prefix("class ")
+            && let Some(name) = rest.split(['(', ':', '{', ' ']).next()
+        {
+            let name = name.trim();
+            if !name.is_empty() {
+                return format!("{language} - {name}").trim_start_matches(" - ").to_string();
+            }
+        }
+    }
+
+    // Try LLM
+    if use_fabric
+        && let Ok(title) = fabric::run_pattern(
+            "summarize",
+            &format!("Generate a very short (3-8 word) title for this code snippet:\n\n{text}"),
+            &config.fabric,
+        )
+        .await
+    {
+        let title = title.lines().next().unwrap_or(&title).trim().to_string();
+        if !title.is_empty() && title.len() <= 100 {
+            return title;
+        }
+    }
+
+    "Code Snippet".to_string()
+}
+
+/// Process a code snippet: create a note with fenced code block and route to code folder.
+async fn process_code_snippet(
+    text: &str,
+    language: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    config: &Config,
+) -> Result<IngestResult> {
+    let tz: chrono_tz::Tz = config
+        .frontmatter
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::America::Los_Angeles);
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let log_date = now.format("%Y-%m-%d").to_string();
+    let log_time = now.format("%H:%M").to_string();
+
+    let use_fabric = fabric::is_available(&config.fabric);
+
+    let title = generate_code_title(text, language, use_fabric, config).await;
+
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
+    all_tags.push("code-snippet".to_string());
+    if !language.is_empty() {
+        all_tags.push(hygiene::sanitize_tag(language));
+    }
+
+    // Generate additional tags via Fabric
+    if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(text, &config.fabric).await {
+        all_tags.extend(fabric_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+    }
+    all_tags.sort();
+    all_tags.dedup();
+
+    // Build fenced code block as the summary
+    let summary = format!("```{language}\n{text}\n```");
+
+    let folder = config.text_capture.code_folder.clone();
+
+    let note = NoteContent {
+        title: title.clone(),
+        source_url: None,
+        asset_path: None,
+        tags: all_tags.clone(),
+        summary,
+        content_type: ContentType::Code {
+            language: language.to_string(),
+        },
+        embed_code: None,
+        method: Some(method),
+    };
+
+    let rendered = markdown::render_note(&note, &config.frontmatter);
+    let filename = format!("{}.md", hygiene::sanitize_filename(&title));
+
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
+
+    let note_path = dest_path.join(&filename);
+    std::fs::write(&note_path, &rendered).context("Failed to write code note to vault")?;
+
+    log::info!(
+        "Wrote code snippet note: {} (folder: {}, language: {})",
+        note_path.display(),
+        folder,
+        language
+    );
+
+    // Log to ledger
+    let ledger_file = ledger::ledger_path(config);
+    let source_display = format!("[code: {}]", if language.is_empty() { "unknown" } else { language });
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
+            date: log_date,
+            time: log_time,
+            method,
+            status: LedgerStatus::Completed,
+            title: Some(title.clone()),
+            source: source_display,
+            folder: Some(folder.clone()),
+        },
+    )?;
+
+    Ok(IngestResult {
+        status: IngestStatus::Completed,
+        note_path: Some(note_path.to_string_lossy().to_string()),
+        title: Some(title),
+        tags: all_tags,
+        elapsed_secs: None,
+        folder: Some(folder),
+        method: Some(method),
+        canonical_url: None,
+    })
+}
+
 /// Detect language of a word (simple heuristic, can be enhanced with LLM).
 async fn detect_language(word: &str, use_fabric: bool, config: &Config) -> String {
     if use_fabric
@@ -1851,5 +2227,191 @@ mod tests {
         assert!(matches!(audio_format_from_extension("stream.webm"), AudioFormat::Mp3));
         assert!(matches!(audio_format_from_extension("RECORDING.WAV"), AudioFormat::Wav));
         assert!(matches!(audio_format_from_extension("noext"), AudioFormat::Mp3));
+    }
+
+    // --- Code detection tests ---
+
+    #[test]
+    fn test_looks_like_code_rust() {
+        let rust_code = r#"use std::collections::HashMap;
+
+fn main() {
+    let mut map = HashMap::new();
+    map.insert("key", "value");
+    println!("{:?}", map);
+}"#;
+        let result = looks_like_code(rust_code);
+        assert!(result.is_some(), "should detect Rust code");
+        assert_eq!(result.expect("expected Some"), "rust");
+    }
+
+    #[test]
+    fn test_looks_like_code_python() {
+        let python_code = r#"import os
+from pathlib import Path
+
+def process_files(directory):
+    for f in Path(directory).iterdir():
+        if f.is_file():
+            print(f.name)
+"#;
+        let result = looks_like_code(python_code);
+        assert!(result.is_some(), "should detect Python code");
+        assert_eq!(result.expect("expected Some"), "python");
+    }
+
+    #[test]
+    fn test_looks_like_code_javascript() {
+        let js_code = r#"const express = require('express');
+const app = express();
+
+function handleRequest(req, res) {
+    const data = req.body;
+    res.json({ status: 'ok' });
+}
+"#;
+        let result = looks_like_code(js_code);
+        assert!(result.is_some(), "should detect JavaScript code");
+        assert_eq!(result.expect("expected Some"), "javascript");
+    }
+
+    #[test]
+    fn test_looks_like_code_go() {
+        let go_code = r#"package main
+
+import "fmt"
+
+func main() {
+    fmt.Println("Hello, World!")
+}
+"#;
+        let result = looks_like_code(go_code);
+        assert!(result.is_some(), "should detect Go code");
+        assert_eq!(result.expect("expected Some"), "go");
+    }
+
+    #[test]
+    fn test_looks_like_code_bash_shebang() {
+        let bash_code = r#"#!/bin/bash
+set -euo pipefail
+
+echo "Hello"
+for i in 1 2 3; do
+    echo "$i"
+done
+"#;
+        let result = looks_like_code(bash_code);
+        assert!(result.is_some(), "should detect bash via shebang");
+        assert_eq!(result.expect("expected Some"), "bash");
+    }
+
+    #[test]
+    fn test_looks_like_code_python_shebang() {
+        let python_code = r#"#!/usr/bin/env python3
+import sys
+
+def main():
+    print(sys.argv)
+"#;
+        let result = looks_like_code(python_code);
+        assert!(result.is_some(), "should detect python via shebang");
+        assert_eq!(result.expect("expected Some"), "python");
+    }
+
+    #[test]
+    fn test_looks_like_code_c() {
+        let c_code = r#"#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    printf("Hello, World!\n");
+    return 0;
+}
+"#;
+        let result = looks_like_code(c_code);
+        assert!(result.is_some(), "should detect C code");
+        assert_eq!(result.expect("expected Some"), "c");
+    }
+
+    #[test]
+    fn test_looks_like_code_plain_text_not_detected() {
+        let text = "Met James at the Rust meetup yesterday. We talked about programming.";
+        assert!(
+            looks_like_code(text).is_none(),
+            "plain text should not be detected as code"
+        );
+    }
+
+    #[test]
+    fn test_looks_like_code_short_text_not_detected() {
+        let text = "fn main()";
+        assert!(
+            looks_like_code(text).is_none(),
+            "single line should not be detected as code (need 3+ lines)"
+        );
+    }
+
+    #[test]
+    fn test_looks_like_code_football_play_not_detected() {
+        let text = "4-2-5 blitz from weak side\nCorner press coverage\nSafety rolls down to flat";
+        assert!(
+            looks_like_code(text).is_none(),
+            "football play description should not be detected as code"
+        );
+    }
+
+    #[test]
+    fn test_looks_like_code_define_pattern_not_detected() {
+        let text = "define: garrulous\nmeaning: excessively talkative\nusage: The garrulous host...";
+        assert!(
+            looks_like_code(text).is_none(),
+            "define pattern should not be detected as code"
+        );
+    }
+
+    #[test]
+    fn test_looks_like_code_grocery_list_not_detected() {
+        let text = "Shopping list:\n- milk\n- eggs\n- bread\n- butter";
+        assert!(
+            looks_like_code(text).is_none(),
+            "grocery list should not be detected as code"
+        );
+    }
+
+    #[test]
+    fn test_looks_like_code_prose_with_technical_words_not_detected() {
+        let text = "I was reading about how to import goods from China.\nThe class was interesting and we learned about different methods.\nThe function of the liver is to filter toxins.";
+        assert!(
+            looks_like_code(text).is_none(),
+            "prose with technical-sounding words should not be detected as code"
+        );
+    }
+
+    #[test]
+    fn test_render_code_note() {
+        let note = NoteContent {
+            title: "Rust HashMap Example".to_string(),
+            source_url: None,
+            asset_path: None,
+            tags: vec!["rust".to_string(), "code-snippet".to_string()],
+            summary: "```rust\nfn main() {\n    println!(\"hello\");\n}\n```".to_string(),
+            content_type: ContentType::Code {
+                language: "rust".to_string(),
+            },
+            embed_code: None,
+            method: Some(IngestMethod::Cli),
+        };
+        let rendered = markdown::render_note(
+            &note,
+            &crate::config::FrontmatterConfig {
+                default_tags: vec![],
+                default_author: String::new(),
+                timezone: "UTC".to_string(),
+            },
+        );
+        assert!(rendered.contains("type: code"));
+        assert!(rendered.contains("language: \"rust\""));
+        assert!(rendered.contains("```rust"));
+        assert!(rendered.contains("  - code-snippet"));
     }
 }
