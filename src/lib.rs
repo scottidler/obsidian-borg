@@ -244,11 +244,14 @@ pub async fn run_file_ingest(
         types::ContentKind::Pdf { data, filename }
     } else if assets::is_document_extension(&filename) {
         types::ContentKind::Document { data, filename }
+    } else if assets::is_audio_extension(&filename) {
+        types::ContentKind::Audio { data, filename }
     } else {
         let all_extensions: Vec<&str> = assets::IMAGE_EXTENSIONS
             .iter()
             .chain(assets::PDF_EXTENSIONS.iter())
             .chain(assets::DOCUMENT_EXTENSIONS.iter())
+            .chain(assets::AUDIO_EXTENSIONS.iter())
             .copied()
             .collect();
         eyre::bail!(

@@ -107,13 +107,7 @@ pub async fn process_content(
         ContentKind::Pdf { data, filename } => {
             process_document_file(&data, &filename, tags, method, force, config, DocumentKind::Pdf).await
         }
-        ContentKind::Audio { .. } => IngestResult {
-            status: IngestStatus::Failed {
-                reason: "Audio ingestion not yet implemented".to_string(),
-            },
-            method: Some(method),
-            ..Default::default()
-        },
+        ContentKind::Audio { data, filename } => process_audio(&data, &filename, tags, method, force, config).await,
         ContentKind::Text(text) => process_text(&text, tags, method, force, config).await,
         ContentKind::Document { data, filename } => {
             process_document_file(&data, &filename, tags, method, force, config, DocumentKind::Document).await
@@ -708,6 +702,236 @@ fn title_from_filename(filename: &str) -> String {
     } else {
         cleaned.trim().to_string()
     }
+}
+
+async fn process_audio(
+    data: &[u8],
+    filename: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    _force: bool,
+    config: &Config,
+) -> IngestResult {
+    let start = Instant::now();
+    match process_audio_inner(data, filename, tags, method, config).await {
+        Ok(mut result) => {
+            let elapsed = start.elapsed();
+            log::info!("Audio pipeline completed in {elapsed:.2?}");
+            result.elapsed_secs = Some(elapsed.as_secs_f64());
+            result
+        }
+        Err(e) => {
+            let elapsed = start.elapsed();
+            log::error!("Audio pipeline failed in {elapsed:.2?}: {e:?}");
+            IngestResult {
+                status: IngestStatus::Failed {
+                    reason: format!("{:#}", e),
+                },
+                method: Some(method),
+                elapsed_secs: Some(elapsed.as_secs_f64()),
+                ..Default::default()
+            }
+        }
+    }
+}
+
+/// Determine the AudioFormat from a file extension string.
+fn audio_format_from_extension(filename: &str) -> AudioFormat {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "wav" => AudioFormat::Wav,
+        "ogg" | "opus" => AudioFormat::Ogg,
+        // mp3, m4a, flac, aac, wma, webm - default to Mp3 for transcription
+        _ => AudioFormat::Mp3,
+    }
+}
+
+async fn process_audio_inner(
+    data: &[u8],
+    filename: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    config: &Config,
+) -> Result<IngestResult> {
+    let tz: chrono_tz::Tz = config
+        .frontmatter
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::America::Los_Angeles);
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let log_date = now.format("%Y-%m-%d").to_string();
+    let log_time = now.format("%H:%M").to_string();
+
+    // Store asset in vault
+    let date_bucket = chrono::Utc::now().format("%Y-%m").to_string();
+    let subdirectory = format!("audio/{date_bucket}");
+
+    let vault_root = expand_tilde(&config.vault.root_path);
+    let (_abs_path, rel_path) =
+        assets::store_asset(&vault_root, data, filename, &subdirectory).context("Failed to store audio asset")?;
+
+    log::info!("Stored audio asset: {rel_path}");
+
+    // Determine audio format for transcription
+    let audio_format = audio_format_from_extension(filename);
+
+    // Attempt transcription (graceful degradation if keys unavailable)
+    let groq_key = crate::config::resolve_secret(&config.groq.api_key).ok();
+    let transcription = if groq_key.is_some() || !config.transcriber.url.is_empty() {
+        let client = TranscriptionClient::new(
+            &config.transcriber.url,
+            groq_key,
+            &config.groq.model,
+            config.transcriber.timeout_secs,
+        );
+        match client.transcribe(data.to_vec(), audio_format, None).await {
+            Ok(response) => {
+                log::info!(
+                    "Transcription succeeded: {} chars, {:.1}s duration",
+                    response.text.len(),
+                    response.duration_secs
+                );
+                Some(response)
+            }
+            Err(e) => {
+                log::warn!("Transcription failed, creating minimal note: {e:#}");
+                None
+            }
+        }
+    } else {
+        log::warn!("No transcription credentials available, creating minimal audio note");
+        None
+    };
+
+    let transcript_text = transcription.as_ref().map(|t| t.text.clone()).unwrap_or_default();
+    let duration_secs = transcription.as_ref().map(|t| t.duration_secs);
+
+    // Generate title from transcription or filename
+    let use_fabric = fabric::is_available(&config.fabric);
+    let title = if !transcript_text.is_empty() {
+        let first_line = transcript_text.lines().next().unwrap_or("").trim();
+        if !first_line.is_empty() && first_line.len() <= 80 {
+            first_line.to_string()
+        } else if use_fabric {
+            // Use fabric to generate a title from the transcription
+            fabric::summarize(&transcript_text, true, &config.fabric)
+                .await
+                .ok()
+                .and_then(|s| s.lines().next().map(|l| l.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| title_from_filename(filename))
+        } else {
+            title_from_filename(filename)
+        }
+    } else {
+        title_from_filename(filename)
+    };
+
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
+    all_tags.push("audio".to_string());
+
+    // Generate tags via Fabric from transcription or filename
+    let tag_source = if !transcript_text.is_empty() {
+        transcript_text.clone()
+    } else {
+        format!("Audio file: {filename}")
+    };
+
+    if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(&tag_source, &config.fabric).await {
+        all_tags.extend(fabric_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+    }
+    all_tags.sort();
+    all_tags.dedup();
+
+    // Classify topic for routing
+    let summary_text = if !transcript_text.is_empty() {
+        transcript_text.clone()
+    } else {
+        format!("Audio: {}", title)
+    };
+
+    let folder = if use_fabric {
+        match fabric::classify_topic(&title, &summary_text, &config.fabric).await {
+            Ok(result) if result.confidence >= config.routing.confidence_threshold => {
+                log::info!(
+                    "Audio routing: LLM classified -> {} (confidence: {:.2})",
+                    result.folder,
+                    result.confidence
+                );
+                all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+                all_tags.sort();
+                all_tags.dedup();
+                result.folder
+            }
+            _ => config.routing.fallback_folder.clone(),
+        }
+    } else {
+        config.routing.fallback_folder.clone()
+    };
+
+    // Build summary
+    let summary = if !transcript_text.is_empty() {
+        format!("## Transcript\n\n{transcript_text}")
+    } else {
+        String::new()
+    };
+
+    let note = NoteContent {
+        title: title.clone(),
+        source_url: None,
+        asset_path: Some(rel_path.clone()),
+        tags: all_tags.clone(),
+        summary,
+        content_type: ContentType::Audio {
+            asset_path: rel_path,
+            duration_secs,
+        },
+        embed_code: None,
+        method: Some(method),
+    };
+
+    let rendered = markdown::render_note(&note, &config.frontmatter);
+    let note_filename = format!("{}.md", hygiene::sanitize_filename(&title));
+
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
+
+    let note_path = dest_path.join(&note_filename);
+    std::fs::write(&note_path, &rendered).context("Failed to write audio note to vault")?;
+
+    log::info!("Wrote audio note: {} (folder: {})", note_path.display(), folder);
+
+    // Log to ledger
+    let ledger_file = ledger::ledger_path(config);
+    let source_display = format!("[audio: {filename}]");
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
+            date: log_date,
+            time: log_time,
+            method,
+            status: LedgerStatus::Completed,
+            title: Some(title.clone()),
+            source: source_display,
+            folder: Some(folder.clone()),
+        },
+    )?;
+
+    Ok(IngestResult {
+        status: IngestStatus::Completed,
+        note_path: Some(note_path.to_string_lossy().to_string()),
+        title: Some(title),
+        tags: all_tags,
+        elapsed_secs: None,
+        folder: Some(folder),
+        method: Some(method),
+        canonical_url: None,
+    })
 }
 
 /// Whether a file-based document is a PDF or a generic document (docx, pptx, etc.).
@@ -1594,28 +1818,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_content_unsupported_types() {
-        use crate::types::ContentKind;
-
-        let config = crate::config::Config::default();
-
-        // Image is now implemented (Phase 3), tested separately
-        // PDF is now implemented (Phase 4), tested separately
-        // Document is now implemented (Phase 4), tested separately
-
-        // Audio (still not implemented)
-        let result = super::process_content(
-            ContentKind::Audio {
-                data: vec![1, 2, 3],
-                filename: "test.mp3".to_string(),
-            },
-            vec![],
-            IngestMethod::Cli,
-            false,
-            &config,
-        )
-        .await;
-        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+    async fn test_process_content_formerly_unsupported_types() {
+        // All content types (Image, PDF, Document, Audio) are now implemented.
+        // This test is retained as a placeholder; type-specific tests cover each.
     }
 
     #[test]
@@ -1631,5 +1836,20 @@ mod tests {
         // Date format: YYYY-MM-DD
         let date_part = dest_str.strip_prefix("/vault/Football/research/").expect("prefix");
         assert_eq!(date_part.len(), 10); // YYYY-MM-DD
+    }
+
+    #[test]
+    fn test_audio_format_from_extension() {
+        assert!(matches!(audio_format_from_extension("song.mp3"), AudioFormat::Mp3));
+        assert!(matches!(audio_format_from_extension("recording.wav"), AudioFormat::Wav));
+        assert!(matches!(audio_format_from_extension("voice.ogg"), AudioFormat::Ogg));
+        assert!(matches!(audio_format_from_extension("memo.opus"), AudioFormat::Ogg));
+        assert!(matches!(audio_format_from_extension("track.m4a"), AudioFormat::Mp3));
+        assert!(matches!(audio_format_from_extension("lossless.flac"), AudioFormat::Mp3));
+        assert!(matches!(audio_format_from_extension("clip.aac"), AudioFormat::Mp3));
+        assert!(matches!(audio_format_from_extension("old.wma"), AudioFormat::Mp3));
+        assert!(matches!(audio_format_from_extension("stream.webm"), AudioFormat::Mp3));
+        assert!(matches!(audio_format_from_extension("RECORDING.WAV"), AudioFormat::Wav));
+        assert!(matches!(audio_format_from_extension("noext"), AudioFormat::Mp3));
     }
 }

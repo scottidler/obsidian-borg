@@ -54,6 +54,9 @@ pub const PDF_EXTENSIONS: &[&str] = &["pdf"];
 /// Known document extensions.
 pub const DOCUMENT_EXTENSIONS: &[&str] = &["docx", "pptx", "xlsx", "epub", "odt", "rtf"];
 
+/// Known audio extensions.
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "opus", "m4a", "flac", "aac", "wma", "webm"];
+
 /// Check if a filename has an image extension.
 pub fn is_image_extension(filename: &str) -> bool {
     let lower = filename.to_lowercase();
@@ -72,6 +75,12 @@ pub fn is_document_extension(filename: &str) -> bool {
     DOCUMENT_EXTENSIONS
         .iter()
         .any(|ext| lower.ends_with(&format!(".{ext}")))
+}
+
+/// Check if a filename has an audio extension.
+pub fn is_audio_extension(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    AUDIO_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
 }
 
 #[cfg(test)]
@@ -181,5 +190,23 @@ mod tests {
         assert!(!is_document_extension("report.pdf"));
         assert!(!is_document_extension("image.png"));
         assert!(!is_document_extension("noext"));
+    }
+
+    #[test]
+    fn test_is_audio_extension() {
+        assert!(is_audio_extension("song.mp3"));
+        assert!(is_audio_extension("recording.wav"));
+        assert!(is_audio_extension("voice.ogg"));
+        assert!(is_audio_extension("memo.opus"));
+        assert!(is_audio_extension("track.m4a"));
+        assert!(is_audio_extension("lossless.flac"));
+        assert!(is_audio_extension("clip.aac"));
+        assert!(is_audio_extension("old.wma"));
+        assert!(is_audio_extension("stream.webm"));
+        assert!(is_audio_extension("RECORDING.MP3"));
+        assert!(is_audio_extension("Voice.OGG"));
+        assert!(!is_audio_extension("image.png"));
+        assert!(!is_audio_extension("doc.pdf"));
+        assert!(!is_audio_extension("noext"));
     }
 }
