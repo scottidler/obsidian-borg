@@ -3,6 +3,7 @@ use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, TelegramConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
+use crate::trace;
 use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use std::sync::Arc;
@@ -152,8 +153,10 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
 
                     let filename = format!("telegram-photo-{}.jpg", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
                     let display_source = format!("[image: {}]", filename);
+                    let trace_id = trace::generate(IngestMethod::Telegram);
 
-                    bot.send_message(chat_id, "Processing image...").await?;
+                    bot.send_message(chat_id, format!("[{trace_id}] Processing image..."))
+                        .await?;
 
                     let content = ContentKind::Image { data, filename };
                     let extra_tags: Vec<String> =
@@ -161,9 +164,15 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
 
                     let bot_clone = bot.clone();
                     tokio::spawn(async move {
-                        let result =
-                            pipeline::process_content(content, extra_tags, IngestMethod::Telegram, false, &config)
-                                .await;
+                        let result = pipeline::process_content(
+                            content,
+                            extra_tags,
+                            IngestMethod::Telegram,
+                            false,
+                            &config,
+                            Some(trace_id),
+                        )
+                        .await;
                         log::debug!("Pipeline result: {:?}", result.status);
                         let reply = format_reply(&result, &display_source);
                         if let Err(e) = bot_clone.send_message(chat_id, reply).await {
@@ -194,15 +203,24 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
 
                     let filename = format!("voice-{}.ogg", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
                     let display_source = format!("[voice: {}]", filename);
+                    let trace_id = trace::generate(IngestMethod::Telegram);
 
-                    bot.send_message(chat_id, "Processing voice note...").await?;
+                    bot.send_message(chat_id, format!("[{trace_id}] Processing voice note..."))
+                        .await?;
 
                     let content = ContentKind::Audio { data, filename };
 
                     let bot_clone = bot.clone();
                     tokio::spawn(async move {
-                        let result =
-                            pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
+                        let result = pipeline::process_content(
+                            content,
+                            vec![],
+                            IngestMethod::Telegram,
+                            false,
+                            &config,
+                            Some(trace_id),
+                        )
+                        .await;
                         log::debug!("Pipeline result: {:?}", result.status);
                         let reply = format_reply(&result, &display_source);
                         if let Err(e) = bot_clone.send_message(chat_id, reply).await {
@@ -233,8 +251,10 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     };
 
                     let display_source = format!("[audio: {}]", original_name);
+                    let trace_id = trace::generate(IngestMethod::Telegram);
 
-                    bot.send_message(chat_id, "Processing audio...").await?;
+                    bot.send_message(chat_id, format!("[{trace_id}] Processing audio..."))
+                        .await?;
 
                     let content = ContentKind::Audio {
                         data,
@@ -243,8 +263,15 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
 
                     let bot_clone = bot.clone();
                     tokio::spawn(async move {
-                        let result =
-                            pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
+                        let result = pipeline::process_content(
+                            content,
+                            vec![],
+                            IngestMethod::Telegram,
+                            false,
+                            &config,
+                            Some(trace_id),
+                        )
+                        .await;
                         log::debug!("Pipeline result: {:?}", result.status);
                         let reply = format_reply(&result, &display_source);
                         if let Err(e) = bot_clone.send_message(chat_id, reply).await {
@@ -291,14 +318,22 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                             let caption = message.caption().unwrap_or("").to_string();
                             let extra_tags: Vec<String> =
                                 if caption.is_empty() { vec![] } else { vec![format!("caption:{caption}")] };
+                            let trace_id = trace::generate(IngestMethod::Telegram);
 
-                            bot.send_message(chat_id, format!("Processing {kind_label}...")).await?;
+                            bot.send_message(chat_id, format!("[{trace_id}] Processing {kind_label}..."))
+                                .await?;
 
                             let bot_clone = bot.clone();
                             tokio::spawn(async move {
-                                let result =
-                                    pipeline::process_content(kind, extra_tags, IngestMethod::Telegram, false, &config)
-                                        .await;
+                                let result = pipeline::process_content(
+                                    kind,
+                                    extra_tags,
+                                    IngestMethod::Telegram,
+                                    false,
+                                    &config,
+                                    Some(trace_id),
+                                )
+                                .await;
                                 log::debug!("Pipeline result: {:?}", result.status);
                                 let reply = format_reply(&result, &display_source);
                                 if let Err(e) = bot_clone.send_message(chat_id, reply).await {
@@ -343,12 +378,20 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     return Ok(());
                 };
 
-                bot.send_message(chat_id, "Processing...").await?;
+                let trace_id = trace::generate(IngestMethod::Telegram);
+                bot.send_message(chat_id, format!("[{trace_id}] Processing...")).await?;
 
                 let bot_clone = bot.clone();
                 tokio::spawn(async move {
-                    let result =
-                        pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
+                    let result = pipeline::process_content(
+                        content,
+                        vec![],
+                        IngestMethod::Telegram,
+                        false,
+                        &config,
+                        Some(trace_id),
+                    )
+                    .await;
                     log::debug!("Pipeline result: {:?}", result.status);
                     let reply = format_reply(&result, &display_source);
                     if let Err(e) = bot_clone.send_message(chat_id, reply).await {

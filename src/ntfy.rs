@@ -135,7 +135,8 @@ pub async fn run(server: String, topic: String, token: Option<String>, config: A
                     let cfg = config.clone();
                     tokio::spawn(async move {
                         let content = ContentKind::Url(url.clone());
-                        let result = pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg).await;
+                        let result =
+                            pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg, None).await;
                         log::info!("ntfy: pipeline result for {url}: {:?}", result.status);
                     });
                 }
@@ -144,7 +145,8 @@ pub async fn run(server: String, topic: String, token: Option<String>, config: A
                     let cfg = config.clone();
                     tokio::spawn(async move {
                         let content = ContentKind::Text(text);
-                        let result = pipeline::process_content(content, vec![], IngestMethod::Ntfy, false, &cfg).await;
+                        let result =
+                            pipeline::process_content(content, vec![], IngestMethod::Ntfy, false, &cfg, None).await;
                         log::info!("ntfy: text capture result: {:?}", result.status);
                     });
                 }

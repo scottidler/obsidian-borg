@@ -95,14 +95,16 @@ fn extract_article_title(article_md: &str, url: &str) -> String {
 static INFLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Top-level pipeline entry point. Dispatches to type-specific handlers based on content kind.
+/// If `trace_id` is provided, it is used as-is; otherwise one is generated internally.
 pub async fn process_content(
     content: ContentKind,
     tags: Vec<String>,
     method: IngestMethod,
     force: bool,
     config: &Config,
+    trace_id: Option<String>,
 ) -> IngestResult {
-    let trace_id = trace::generate(method);
+    let trace_id = trace_id.unwrap_or_else(|| trace::generate(method));
     log::info!("[{trace_id}] Starting ingest: method={method}");
     let mut result = match content {
         ContentKind::Url(url) => process_url(&url, tags, method, force, config, &trace_id).await,
@@ -1078,7 +1080,6 @@ impl DocumentKind {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn process_document_file(
     data: &[u8],
     filename: &str,
@@ -1118,7 +1119,6 @@ async fn process_document_file(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn process_document_file_inner(
     data: &[u8],
     filename: &str,

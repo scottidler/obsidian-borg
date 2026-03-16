@@ -3,6 +3,7 @@ use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, DiscordConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
+use crate::trace;
 use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use serenity::async_trait;
@@ -109,14 +110,22 @@ impl EventHandler for Handler {
                         _ => "file",
                     };
                     let display_source = format!("[{}: {}]", kind_label, att_filename);
+                    let trace_id = trace::generate(IngestMethod::Discord);
 
                     let _ = msg
                         .channel_id
-                        .say(&ctx.http, format!("Processing {kind_label}..."))
+                        .say(&ctx.http, format!("[{trace_id}] Processing {kind_label}..."))
                         .await;
 
-                    let result =
-                        pipeline::process_content(kind, vec![], IngestMethod::Discord, false, &self.config).await;
+                    let result = pipeline::process_content(
+                        kind,
+                        vec![],
+                        IngestMethod::Discord,
+                        false,
+                        &self.config,
+                        Some(trace_id),
+                    )
+                    .await;
                     let _ = msg
                         .channel_id
                         .say(&ctx.http, format_reply(&result, &display_source))
@@ -161,8 +170,20 @@ impl EventHandler for Handler {
             return;
         };
 
-        let _ = msg.channel_id.say(&ctx.http, "Processing...").await;
-        let result = pipeline::process_content(content, vec![], IngestMethod::Discord, false, &self.config).await;
+        let trace_id = trace::generate(IngestMethod::Discord);
+        let _ = msg
+            .channel_id
+            .say(&ctx.http, format!("[{trace_id}] Processing..."))
+            .await;
+        let result = pipeline::process_content(
+            content,
+            vec![],
+            IngestMethod::Discord,
+            false,
+            &self.config,
+            Some(trace_id),
+        )
+        .await;
         let _ = msg
             .channel_id
             .say(&ctx.http, format_reply(&result, &display_source))

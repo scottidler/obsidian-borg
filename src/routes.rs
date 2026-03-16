@@ -27,7 +27,7 @@ pub async fn ingest(State(config): State<Arc<Config>>, Json(request): Json<Inges
 
     let method = request.method.unwrap_or(IngestMethod::Http);
     let content = ContentKind::Url(request.url.clone());
-    let result = pipeline::process_content(content, tags, method, request.force, &config).await;
+    let result = pipeline::process_content(content, tags, method, request.force, &config, None).await;
 
     match &result.status {
         IngestStatus::Failed { reason } => {
@@ -50,7 +50,7 @@ pub async fn note(State(config): State<Arc<Config>>, Json(request): Json<NoteReq
 
     let tags = request.tags.unwrap_or_default();
     let content = ContentKind::Text(request.text);
-    let result = pipeline::process_content(content, tags, IngestMethod::Http, false, &config).await;
+    let result = pipeline::process_content(content, tags, IngestMethod::Http, false, &config, None).await;
 
     match &result.status {
         IngestStatus::Failed { reason } => {
@@ -149,7 +149,7 @@ pub async fn ingest_multipart(State(config): State<Arc<Config>>, mut multipart: 
         });
     };
 
-    let result = pipeline::process_content(content, tags, IngestMethod::Http, force, &config).await;
+    let result = pipeline::process_content(content, tags, IngestMethod::Http, force, &config, None).await;
 
     match &result.status {
         IngestStatus::Failed { reason } => {

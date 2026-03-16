@@ -1,6 +1,7 @@
 #![deny(clippy::unwrap_used)]
 #![deny(dead_code)]
 #![deny(unused_variables)]
+#![allow(clippy::too_many_arguments)]
 
 pub mod assets;
 pub mod backoff;
@@ -208,6 +209,7 @@ pub async fn run_note(config: Config, text: String, tags: Option<Vec<String>>) -
         types::IngestMethod::Cli,
         false,
         &config,
+        None,
     )
     .await;
 
@@ -269,6 +271,7 @@ pub async fn run_file_ingest(
         types::IngestMethod::Cli,
         force,
         &config,
+        None,
     )
     .await;
 
