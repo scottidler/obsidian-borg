@@ -2,7 +2,7 @@ use crate::backoff::ExponentialBackoff;
 use crate::config::Config;
 use crate::pipeline;
 use crate::router::extract_url_from_text;
-use crate::types::IngestMethod;
+use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -110,7 +110,8 @@ pub async fn run(server: String, topic: String, token: Option<String>, config: A
             log::info!("ntfy: processing URL {url}");
             let cfg = config.clone();
             tokio::spawn(async move {
-                let result = pipeline::process_url(&url, tags, IngestMethod::Ntfy, force, &cfg).await;
+                let content = ContentKind::Url(url.clone());
+                let result = pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg).await;
                 log::info!("ntfy: pipeline result for {url}: {:?}", result.status);
             });
         }

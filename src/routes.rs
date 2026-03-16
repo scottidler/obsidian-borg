@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::health::HealthResponse;
 use crate::pipeline;
-use crate::types::{IngestMethod, IngestRequest, IngestResult, IngestStatus};
+use crate::types::{ContentKind, IngestMethod, IngestRequest, IngestResult, IngestStatus};
 
 pub async fn health() -> Json<HealthResponse> {
     crate::health::health_handler("obsidian-borg", env!("GIT_DESCRIBE")).await
@@ -17,7 +17,8 @@ pub async fn ingest(State(config): State<Arc<Config>>, Json(request): Json<Inges
     let tags = request.tags.unwrap_or_default();
 
     let method = request.method.unwrap_or(IngestMethod::Http);
-    let result = pipeline::process_url(&request.url, tags, method, request.force, &config).await;
+    let content = ContentKind::Url(request.url.clone());
+    let result = pipeline::process_content(content, tags, method, request.force, &config).await;
 
     match &result.status {
         IngestStatus::Failed { reason } => {

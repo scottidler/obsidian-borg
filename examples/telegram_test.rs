@@ -2,8 +2,7 @@ use teloxide::prelude::*;
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace"))
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("trace")).init();
 
     let token = std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN must be set");
     let bot = Bot::new(token);
@@ -15,8 +14,5 @@ async fn main() {
         Ok::<(), teloxide::RequestError>(())
     });
 
-    Dispatcher::builder(bot, handler)
-        .build()
-        .dispatch()
-        .await;
+    Dispatcher::builder(bot, handler).build().dispatch().await;
 }

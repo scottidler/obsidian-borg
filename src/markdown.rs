@@ -6,7 +6,8 @@ use crate::types::IngestMethod;
 
 pub struct NoteContent {
     pub title: String,
-    pub source_url: String,
+    pub source_url: Option<String>,
+    pub asset_path: Option<String>,
     pub tags: Vec<String>,
     pub summary: String,
     pub content_type: ContentType,
@@ -15,8 +16,37 @@ pub struct NoteContent {
 }
 
 pub enum ContentType {
-    YouTube { uploader: String, duration_secs: f64 },
+    YouTube {
+        uploader: String,
+        duration_secs: f64,
+    },
     Article,
+    Image {
+        asset_path: String,
+    },
+    Pdf {
+        asset_path: String,
+    },
+    Audio {
+        asset_path: String,
+        duration_secs: Option<f64>,
+    },
+    Note,
+    VocabDefine {
+        word: String,
+        language: String,
+    },
+    VocabClarify {
+        word_a: String,
+        word_b: String,
+        language: String,
+    },
+    Document {
+        asset_path: String,
+    },
+    Code {
+        language: String,
+    },
 }
 
 pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -> String {
@@ -44,13 +74,27 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
     let type_field = match &note.content_type {
         ContentType::YouTube { .. } => "youtube",
         ContentType::Article => "article",
+        ContentType::Image { .. } => "image",
+        ContentType::Pdf { .. } => "pdf",
+        ContentType::Audio { .. } => "audio",
+        ContentType::Note => "note",
+        ContentType::VocabDefine { .. } | ContentType::VocabClarify { .. } => "vocab",
+        ContentType::Document { .. } => "document",
+        ContentType::Code { .. } => "code",
     };
 
     let mut fm = format!(
-        "---\ntitle: \"{}\"\ndate: {date}\nday: {day}\ntime: \"{time}\"\nsource: \"{}\"\ntype: {type_field}\n",
+        "---\ntitle: \"{}\"\ndate: {date}\nday: {day}\ntime: \"{time}\"\n",
         escape_yaml_string(&note.title),
-        note.source_url,
     );
+
+    if let Some(source) = &note.source_url {
+        fm.push_str(&format!("source: \"{source}\"\n"));
+    }
+    if let Some(asset) = &note.asset_path {
+        fm.push_str(&format!("asset: \"{asset}\"\n"));
+    }
+    fm.push_str(&format!("type: {type_field}\n"));
 
     if let Some(method) = &note.method {
         fm.push_str(&format!("method: {method}\n"));
@@ -65,16 +109,28 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         ));
     }
 
-    if let ContentType::YouTube {
-        uploader,
-        duration_secs,
-    } = &note.content_type
-    {
-        let minutes = (*duration_secs / 60.0).round() as u32;
-        fm.push_str(&format!(
-            "uploader: \"{}\"\nduration_min: {minutes}\n",
-            escape_yaml_string(uploader)
-        ));
+    match &note.content_type {
+        ContentType::YouTube {
+            uploader,
+            duration_secs,
+        } => {
+            let minutes = (*duration_secs / 60.0).round() as u32;
+            fm.push_str(&format!(
+                "uploader: \"{}\"\nduration_min: {minutes}\n",
+                escape_yaml_string(uploader)
+            ));
+        }
+        ContentType::Audio {
+            duration_secs: Some(secs),
+            ..
+        } => {
+            let minutes = (*secs / 60.0).round() as u32;
+            fm.push_str(&format!("duration_min: {minutes}\n"));
+        }
+        ContentType::Code { language } => {
+            fm.push_str(&format!("language: \"{language}\"\n"));
+        }
+        _ => {}
     }
 
     fm.push_str("---\n\n");
@@ -88,6 +144,16 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         body.push_str("\n\n");
     }
 
+    // Asset embed for file-based content
+    match &note.content_type {
+        ContentType::Image { asset_path } | ContentType::Pdf { asset_path } | ContentType::Document { asset_path } => {
+            if let Some(filename) = std::path::Path::new(asset_path).file_name().and_then(|f| f.to_str()) {
+                body.push_str(&format!("![[{filename}]]\n\n"));
+            }
+        }
+        _ => {}
+    }
+
     // Summary section
     if !note.summary.is_empty() {
         body.push_str("## Summary\n\n");
@@ -96,10 +162,9 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
     }
 
     // Source footer
-    body.push_str(&format!(
-        "---\n\n*Source: [{}]({})*\n",
-        note.source_url, note.source_url
-    ));
+    if let Some(source) = &note.source_url {
+        body.push_str(&format!("---\n\n*Source: [{source}]({source})*\n"));
+    }
 
     format!("{fm}{body}")
 }
@@ -128,7 +193,8 @@ mod tests {
     fn test_render_article_note() {
         let note = NoteContent {
             title: "Test Article".to_string(),
-            source_url: "https://example.com/post".to_string(),
+            source_url: Some("https://example.com/post".to_string()),
+            asset_path: None,
             tags: vec!["rust".to_string(), "programming".to_string()],
             summary: "This is a summary.".to_string(),
             content_type: ContentType::Article,
@@ -150,7 +216,8 @@ mod tests {
     fn test_render_youtube_note() {
         let note = NoteContent {
             title: "Cool Video".to_string(),
-            source_url: "https://youtube.com/watch?v=abc".to_string(),
+            source_url: Some("https://youtube.com/watch?v=abc".to_string()),
+            asset_path: None,
             tags: vec!["youtube".to_string()],
             summary: "Video summary here.".to_string(),
             content_type: ContentType::YouTube {
@@ -178,7 +245,8 @@ mod tests {
         };
         let note = NoteContent {
             title: "Test".to_string(),
-            source_url: "https://example.com".to_string(),
+            source_url: Some("https://example.com".to_string()),
+            asset_path: None,
             tags: vec!["ai".to_string()],
             summary: String::new(),
             content_type: ContentType::Article,
@@ -189,6 +257,44 @@ mod tests {
         assert!(rendered.contains("  - ai"));
         assert!(rendered.contains("  - obsidian-borg"));
         assert!(rendered.contains("author: \"Scott\""));
+    }
+
+    #[test]
+    fn test_render_note_without_source() {
+        let note = NoteContent {
+            title: "Quick Thought".to_string(),
+            source_url: None,
+            asset_path: None,
+            tags: vec!["note".to_string()],
+            summary: "Some quick note text.".to_string(),
+            content_type: ContentType::Note,
+            embed_code: None,
+            method: Some(IngestMethod::Telegram),
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(rendered.contains("type: note"));
+        assert!(!rendered.contains("source:"));
+        assert!(!rendered.contains("Source:"));
+    }
+
+    #[test]
+    fn test_render_image_note() {
+        let note = NoteContent {
+            title: "Whiteboard Photo".to_string(),
+            source_url: None,
+            asset_path: Some("⚙️ System/attachments/images/2026-03/whiteboard-a1b2c3d4.png".to_string()),
+            tags: vec!["image".to_string()],
+            summary: "A whiteboard diagram.".to_string(),
+            content_type: ContentType::Image {
+                asset_path: "⚙️ System/attachments/images/2026-03/whiteboard-a1b2c3d4.png".to_string(),
+            },
+            embed_code: None,
+            method: Some(IngestMethod::Cli),
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(rendered.contains("type: image"));
+        assert!(rendered.contains("asset:"));
+        assert!(rendered.contains("![[whiteboard-a1b2c3d4.png]]"));
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, DiscordConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
-use crate::types::IngestMethod;
+use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -27,7 +27,8 @@ impl EventHandler for Handler {
         };
 
         let _ = msg.channel_id.say(&ctx.http, "Processing...").await;
-        let result = pipeline::process_url(&url, vec![], IngestMethod::Discord, false, &self.config).await;
+        let content = ContentKind::Url(url.clone());
+        let result = pipeline::process_content(content, vec![], IngestMethod::Discord, false, &self.config).await;
         let _ = msg.channel_id.say(&ctx.http, format_reply(&result, &url)).await;
     }
 }

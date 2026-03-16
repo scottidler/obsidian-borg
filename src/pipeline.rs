@@ -6,7 +6,7 @@ use crate::ledger::{self, LedgerEntry, LedgerStatus};
 use crate::markdown::{self, ContentType, NoteContent};
 use crate::router;
 use crate::transcription::TranscriptionClient;
-use crate::types::{AudioFormat, IngestMethod, IngestResult, IngestStatus};
+use crate::types::{AudioFormat, ContentKind, IngestMethod, IngestResult, IngestStatus};
 use crate::youtube;
 use eyre::{Context, Result};
 use std::collections::HashSet;
@@ -89,6 +89,54 @@ fn extract_article_title(article_md: &str, url: &str) -> String {
 /// The ledger file is the durable dedup index, but concurrent tasks can race past
 /// the ledger check before either writes its ✅ entry. This guard serializes that.
 static INFLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Top-level pipeline entry point. Dispatches to type-specific handlers based on content kind.
+pub async fn process_content(
+    content: ContentKind,
+    tags: Vec<String>,
+    method: IngestMethod,
+    force: bool,
+    config: &Config,
+) -> IngestResult {
+    match content {
+        ContentKind::Url(url) => process_url(&url, tags, method, force, config).await,
+        ContentKind::Image { .. } => IngestResult {
+            status: IngestStatus::Failed {
+                reason: "Image ingestion not yet implemented".to_string(),
+            },
+            method: Some(method),
+            ..Default::default()
+        },
+        ContentKind::Pdf { .. } => IngestResult {
+            status: IngestStatus::Failed {
+                reason: "PDF ingestion not yet implemented".to_string(),
+            },
+            method: Some(method),
+            ..Default::default()
+        },
+        ContentKind::Audio { .. } => IngestResult {
+            status: IngestStatus::Failed {
+                reason: "Audio ingestion not yet implemented".to_string(),
+            },
+            method: Some(method),
+            ..Default::default()
+        },
+        ContentKind::Text(_) => IngestResult {
+            status: IngestStatus::Failed {
+                reason: "Text ingestion not yet implemented".to_string(),
+            },
+            method: Some(method),
+            ..Default::default()
+        },
+        ContentKind::Document { .. } => IngestResult {
+            status: IngestStatus::Failed {
+                reason: "Document ingestion not yet implemented".to_string(),
+            },
+            method: Some(method),
+            ..Default::default()
+        },
+    }
+}
 
 pub async fn process_url(
     url: &str,
@@ -192,7 +240,7 @@ async fn process_url_inner(
                         status: LedgerStatus::Skipped,
                         title: None,
                         source: canonical.clone(),
-                            folder: None,
+                        folder: None,
                     },
                 )?;
                 return Ok(IngestResult {
@@ -323,7 +371,8 @@ async fn process_url_inner(
 
     let note = NoteContent {
         title: title.clone(),
-        source_url: url_match.url.clone(),
+        source_url: Some(url_match.url.clone()),
+        asset_path: None,
         tags: all_tags.clone(),
         summary,
         content_type,
@@ -584,6 +633,80 @@ mod tests {
             extract_article_title(md, "https://example.com/my-great-article"),
             "my great article"
         );
+    }
+
+    #[tokio::test]
+    async fn test_process_content_unsupported_types() {
+        use crate::types::ContentKind;
+
+        let config = crate::config::Config::default();
+
+        // Image
+        let result = super::process_content(
+            ContentKind::Image {
+                data: vec![1, 2, 3],
+                filename: "test.png".to_string(),
+            },
+            vec![],
+            IngestMethod::Cli,
+            false,
+            &config,
+        )
+        .await;
+        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+
+        // PDF
+        let result = super::process_content(
+            ContentKind::Pdf {
+                data: vec![1, 2, 3],
+                filename: "test.pdf".to_string(),
+            },
+            vec![],
+            IngestMethod::Cli,
+            false,
+            &config,
+        )
+        .await;
+        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+
+        // Audio
+        let result = super::process_content(
+            ContentKind::Audio {
+                data: vec![1, 2, 3],
+                filename: "test.mp3".to_string(),
+            },
+            vec![],
+            IngestMethod::Cli,
+            false,
+            &config,
+        )
+        .await;
+        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+
+        // Text
+        let result = super::process_content(
+            ContentKind::Text("some note text".to_string()),
+            vec![],
+            IngestMethod::Cli,
+            false,
+            &config,
+        )
+        .await;
+        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+
+        // Document
+        let result = super::process_content(
+            ContentKind::Document {
+                data: vec![1, 2, 3],
+                filename: "test.docx".to_string(),
+            },
+            vec![],
+            IngestMethod::Cli,
+            false,
+            &config,
+        )
+        .await;
+        assert!(matches!(result.status, IngestStatus::Failed { .. }));
     }
 
     #[test]

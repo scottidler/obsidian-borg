@@ -84,7 +84,10 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     // Telegram bot (config-driven, host-gated)
     if let Some(tg_config) = &config.telegram {
         if !config::is_local_host(&tg_config.host) {
-            log::info!("Telegram configured but host {:?} does not match this machine, skipping", tg_config.host);
+            log::info!(
+                "Telegram configured but host {:?} does not match this machine, skipping",
+                tg_config.host
+            );
             eprintln!("{} telegram bot skipped (host mismatch)", "-->".yellow());
         } else {
             match config::resolve_secret(&tg_config.bot_token) {
@@ -109,7 +112,10 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     // Discord bot (config-driven, host-gated)
     if let Some(dc_config) = &config.discord {
         if !config::is_local_host(&dc_config.host) {
-            log::info!("Discord configured but host {:?} does not match this machine, skipping", dc_config.host);
+            log::info!(
+                "Discord configured but host {:?} does not match this machine, skipping",
+                dc_config.host
+            );
             eprintln!("{} discord bot skipped (host mismatch)", "-->".yellow());
         } else {
             match config::resolve_secret(&dc_config.bot_token) {
@@ -131,7 +137,10 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     // ntfy subscriber (config-driven, host-gated)
     if let Some(ntfy_config) = &config.ntfy {
         if !config::is_local_host(&ntfy_config.host) {
-            log::info!("ntfy configured but host {:?} does not match this machine, skipping", ntfy_config.host);
+            log::info!(
+                "ntfy configured but host {:?} does not match this machine, skipping",
+                ntfy_config.host
+            );
             eprintln!("{} ntfy subscriber skipped (host mismatch)", "-->".yellow());
         } else {
             let server = ntfy_config.server.clone();

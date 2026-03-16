@@ -1,6 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Input content classification - what did we receive?
+/// Input sources construct this; the pipeline dispatches on it.
+#[derive(Debug, Clone)]
+pub enum ContentKind {
+    Url(String),
+    Image { data: Vec<u8>, filename: String },
+    Pdf { data: Vec<u8>, filename: String },
+    Audio { data: Vec<u8>, filename: String },
+    Text(String),
+    Document { data: Vec<u8>, filename: String },
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IngestMethod {
@@ -122,6 +134,27 @@ mod tests {
         let deserialized: IngestRequest = serde_yaml::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.url, "https://youtube.com/watch?v=abc");
         assert_eq!(deserialized.tags, Some(vec!["ai".to_string(), "rust".to_string()]));
+    }
+
+    #[test]
+    fn test_content_kind_url() {
+        let kind = ContentKind::Url("https://example.com".to_string());
+        assert!(matches!(kind, ContentKind::Url(ref u) if u == "https://example.com"));
+    }
+
+    #[test]
+    fn test_content_kind_image() {
+        let kind = ContentKind::Image {
+            data: vec![1, 2, 3],
+            filename: "test.png".to_string(),
+        };
+        assert!(matches!(kind, ContentKind::Image { ref filename, .. } if filename == "test.png"));
+    }
+
+    #[test]
+    fn test_content_kind_text() {
+        let kind = ContentKind::Text("hello world".to_string());
+        assert!(matches!(kind, ContentKind::Text(ref t) if t == "hello world"));
     }
 
     #[test]

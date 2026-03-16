@@ -2,7 +2,7 @@ use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, TelegramConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
-use crate::types::IngestMethod;
+use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -90,7 +90,9 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                 let chat_id = message.chat.id;
                 let bot_clone = bot.clone();
                 tokio::spawn(async move {
-                    let result = pipeline::process_url(&url, vec![], IngestMethod::Telegram, false, &config).await;
+                    let content = ContentKind::Url(url.clone());
+                    let result =
+                        pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
                     log::debug!("Pipeline result: {:?}", result.status);
                     let reply = format_reply(&result, &url);
                     if let Err(e) = bot_clone.send_message(chat_id, reply).await {
