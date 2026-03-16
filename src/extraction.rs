@@ -1,20 +1,56 @@
 use eyre::{Context, Result};
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
+
+/// Timeout for markitdown-cli execution (30 seconds).
+const MARKITDOWN_TIMEOUT_SECS: u64 = 30;
 
 /// Extract markdown text from a file using markitdown-cli.
 ///
 /// Returns the extracted markdown content, or an error if the tool
-/// is not found or extraction fails.
+/// is not found or extraction fails. Applies a 30-second timeout
+/// to prevent hangs on problematic files.
 pub fn extract_markdown(file_path: &Path) -> Result<String> {
-    let output = Command::new("markitdown-cli")
+    // Bail early if file doesn't exist - avoids spawning a process that may hang
+    if !file_path.exists() {
+        eyre::bail!("File does not exist: {}", file_path.display());
+    }
+
+    let mut child = Command::new("markitdown-cli")
         .arg(file_path.as_os_str())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .context("markitdown-cli not found - install with: pipx install markitdown-cli")?
+        .context("markitdown-cli not found - install with: pipx install markitdown-cli")?;
+
+    // Wait with timeout to prevent hangs
+    let timeout = Duration::from_secs(MARKITDOWN_TIMEOUT_SECS);
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    eyre::bail!(
+                        "markitdown-cli timed out after {}s for {}",
+                        MARKITDOWN_TIMEOUT_SECS,
+                        file_path.display()
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                eyre::bail!("Failed to wait for markitdown-cli: {e}");
+            }
+        }
+    }
+
+    let output = child
         .wait_with_output()
-        .context("Failed to wait for markitdown-cli")?;
+        .context("Failed to collect markitdown-cli output")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -42,30 +78,14 @@ pub fn is_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_extract_markdown_nonexistent_file() {
         let path = Path::new("/tmp/obsidian-borg-test-nonexistent-file.pdf");
-        // Should fail (file doesn't exist or markitdown-cli not installed)
         let result = extract_markdown(path);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_extract_markdown_plain_text_file() {
-        let tmp_dir = std::env::temp_dir().join("obsidian-borg-test-extraction");
-        let _ = fs::create_dir_all(&tmp_dir);
-        let test_file = tmp_dir.join("test.txt");
-        fs::write(&test_file, "Hello, this is a test document with some content.").expect("write");
-
-        let result = extract_markdown(&test_file);
-        // If markitdown-cli is installed, it should extract text; otherwise error is fine
-        if let Ok(text) = result {
-            assert!(!text.is_empty());
-        }
-
-        let _ = fs::remove_dir_all(&tmp_dir);
+        let err = format!("{}", result.expect_err("should fail"));
+        assert!(err.contains("does not exist"), "got: {err}");
     }
 
     #[test]

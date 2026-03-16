@@ -195,3 +195,39 @@ tasks:
     bash: |
       cargo install --path .
       echo "✅ Binary installed to ~/.cargo/bin"
+
+  deploy:
+    help: "Build, install, and restart daemon locally and on remote hosts"
+    params:
+      --local-only:
+        default: "false"
+        help: "Only deploy locally, skip remote hosts"
+    before: [ci]
+    bash: |
+      set -e
+
+      echo "=== Local deploy ==="
+      cargo install --path .
+      echo "✅ Binary installed"
+
+      systemctl --user restart obsidian-borg 2>/dev/null && echo "✅ Daemon restarted" || echo "⚠️  Daemon not running as service"
+
+      if [ "${local_only}" = "true" ]; then
+        echo "Skipping remote hosts (--local-only)"
+        exit 0
+      fi
+
+      # Remote hosts to deploy to (SSH alias or hostname)
+      REMOTE_HOSTS="${DEPLOY_HOSTS:-lappy}"
+      REPO_PATH="repos/scottidler/obsidian-borg"
+
+      for host in $REMOTE_HOSTS; do
+        echo ""
+        echo "=== Remote deploy: $host ==="
+        ssh "$host" "cd ~/$REPO_PATH && git pull && cargo install --path . && systemctl --user restart obsidian-borg" \
+          && echo "✅ $host deployed" \
+          || echo "❌ $host failed"
+      done
+
+      echo ""
+      echo "🚀 Deploy complete"
