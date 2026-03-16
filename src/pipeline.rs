@@ -1,9 +1,11 @@
+use crate::assets;
 use crate::config::Config;
 use crate::fabric;
 use crate::hygiene;
 use crate::jina;
 use crate::ledger::{self, LedgerEntry, LedgerStatus};
 use crate::markdown::{self, ContentType, NoteContent};
+use crate::ocr;
 use crate::router;
 use crate::transcription::TranscriptionClient;
 use crate::types::{AudioFormat, ContentKind, IngestMethod, IngestResult, IngestStatus};
@@ -100,13 +102,7 @@ pub async fn process_content(
 ) -> IngestResult {
     match content {
         ContentKind::Url(url) => process_url(&url, tags, method, force, config).await,
-        ContentKind::Image { .. } => IngestResult {
-            status: IngestStatus::Failed {
-                reason: "Image ingestion not yet implemented".to_string(),
-            },
-            method: Some(method),
-            ..Default::default()
-        },
+        ContentKind::Image { data, filename } => process_image(&data, &filename, tags, method, force, config).await,
         ContentKind::Pdf { .. } => IngestResult {
             status: IngestStatus::Failed {
                 reason: "PDF ingestion not yet implemented".to_string(),
@@ -515,6 +511,210 @@ async fn process_article_jina(url: &str) -> Result<(String, String, ContentType)
     let title = extract_article_title(&article_md, url);
 
     Ok((title, article_md, ContentType::Article))
+}
+
+async fn process_image(
+    data: &[u8],
+    filename: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    _force: bool,
+    config: &Config,
+) -> IngestResult {
+    let start = Instant::now();
+    match process_image_inner(data, filename, tags, method, config).await {
+        Ok(mut result) => {
+            let elapsed = start.elapsed();
+            log::info!("Image pipeline completed in {elapsed:.2?}");
+            result.elapsed_secs = Some(elapsed.as_secs_f64());
+            result
+        }
+        Err(e) => {
+            let elapsed = start.elapsed();
+            log::error!("Image pipeline failed in {elapsed:.2?}: {e:?}");
+            IngestResult {
+                status: IngestStatus::Failed {
+                    reason: format!("{:#}", e),
+                },
+                method: Some(method),
+                elapsed_secs: Some(elapsed.as_secs_f64()),
+                ..Default::default()
+            }
+        }
+    }
+}
+
+async fn process_image_inner(
+    data: &[u8],
+    filename: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    config: &Config,
+) -> Result<IngestResult> {
+    let tz: chrono_tz::Tz = config
+        .frontmatter
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::America::Los_Angeles);
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let log_date = now.format("%Y-%m-%d").to_string();
+    let log_time = now.format("%H:%M").to_string();
+
+    // Store asset in vault
+    let date_bucket = chrono::Utc::now().format("%Y-%m").to_string();
+    let subdirectory = format!("images/{date_bucket}");
+
+    let vault_root = expand_tilde(&config.vault.root_path);
+    let (_abs_path, rel_path) =
+        assets::store_asset(&vault_root, data, filename, &subdirectory).context("Failed to store image asset")?;
+
+    log::info!("Stored image asset: {rel_path}");
+
+    // Write to temp file for OCR
+    let temp_dir = std::env::temp_dir().join("obsidian-borg");
+    std::fs::create_dir_all(&temp_dir).context("Failed to create temp directory")?;
+    let temp_path = temp_dir.join(filename);
+    std::fs::write(&temp_path, data).context("Failed to write temp image file")?;
+
+    // OCR text extraction (best-effort)
+    let ocr_text = ocr::ocr_extract(&temp_path).unwrap_or_else(|e| {
+        log::warn!("OCR extraction failed: {e:#}");
+        String::new()
+    });
+
+    if !ocr_text.is_empty() {
+        log::debug!("OCR extracted {} chars", ocr_text.len());
+    }
+
+    // Generate title
+    let use_fabric = fabric::is_available(&config.fabric);
+    let title = if !ocr_text.is_empty() && ocr_text.len() > 5 {
+        // Use first meaningful line from OCR as title candidate
+        let first_line = ocr_text.lines().find(|l| l.trim().len() > 3).unwrap_or("").trim();
+        if !first_line.is_empty() && first_line.len() <= 80 {
+            first_line.to_string()
+        } else {
+            title_from_filename(filename)
+        }
+    } else {
+        title_from_filename(filename)
+    };
+
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
+    all_tags.push("image".to_string());
+
+    // Generate tags via Fabric from OCR text or filename
+    let tag_source = if !ocr_text.is_empty() {
+        ocr_text.clone()
+    } else {
+        format!("Image file: {filename}")
+    };
+
+    if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(&tag_source, &config.fabric).await {
+        all_tags.extend(fabric_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+    }
+    all_tags.sort();
+    all_tags.dedup();
+
+    // Classify topic for routing
+    let summary_text = if !ocr_text.is_empty() {
+        ocr_text.clone()
+    } else {
+        format!("Image: {}", title)
+    };
+
+    let folder = if use_fabric {
+        match fabric::classify_topic(&title, &summary_text, &config.fabric).await {
+            Ok(result) if result.confidence >= config.routing.confidence_threshold => {
+                log::info!(
+                    "Image routing: LLM classified -> {} (confidence: {:.2})",
+                    result.folder,
+                    result.confidence
+                );
+                all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+                all_tags.sort();
+                all_tags.dedup();
+                result.folder
+            }
+            _ => config.routing.fallback_folder.clone(),
+        }
+    } else {
+        config.routing.fallback_folder.clone()
+    };
+
+    // Build summary
+    let summary = if !ocr_text.is_empty() {
+        format!("## OCR Text\n\n{ocr_text}")
+    } else {
+        String::new()
+    };
+
+    let note = NoteContent {
+        title: title.clone(),
+        source_url: None,
+        asset_path: Some(rel_path.clone()),
+        tags: all_tags.clone(),
+        summary,
+        content_type: ContentType::Image { asset_path: rel_path },
+        embed_code: None,
+        method: Some(method),
+    };
+
+    let rendered = markdown::render_note(&note, &config.frontmatter);
+    let note_filename = format!("{}.md", hygiene::sanitize_filename(&title));
+
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
+
+    let note_path = dest_path.join(&note_filename);
+    std::fs::write(&note_path, &rendered).context("Failed to write image note to vault")?;
+
+    log::info!("Wrote image note: {} (folder: {})", note_path.display(), folder);
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_path);
+
+    // Log to ledger
+    let ledger_file = ledger::ledger_path(config);
+    let source_display = format!("[image: {filename}]");
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
+            date: log_date,
+            time: log_time,
+            method,
+            status: LedgerStatus::Completed,
+            title: Some(title.clone()),
+            source: source_display,
+            folder: Some(folder.clone()),
+        },
+    )?;
+
+    Ok(IngestResult {
+        status: IngestStatus::Completed,
+        note_path: Some(note_path.to_string_lossy().to_string()),
+        title: Some(title),
+        tags: all_tags,
+        elapsed_secs: None,
+        folder: Some(folder),
+        method: Some(method),
+        canonical_url: None,
+    })
+}
+
+fn title_from_filename(filename: &str) -> String {
+    let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
+    let cleaned = stem.replace(['-', '_'], " ");
+    if cleaned.trim().is_empty() {
+        "Untitled Image".to_string()
+    } else {
+        cleaned.trim().to_string()
+    }
 }
 
 /// Detect structured text patterns before LLM classification.
@@ -1130,19 +1330,7 @@ mod tests {
 
         let config = crate::config::Config::default();
 
-        // Image
-        let result = super::process_content(
-            ContentKind::Image {
-                data: vec![1, 2, 3],
-                filename: "test.png".to_string(),
-            },
-            vec![],
-            IngestMethod::Cli,
-            false,
-            &config,
-        )
-        .await;
-        assert!(matches!(result.status, IngestStatus::Failed { .. }));
+        // Image is now implemented (Phase 3), tested separately
 
         // PDF
         let result = super::process_content(

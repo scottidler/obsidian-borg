@@ -2,6 +2,7 @@
 #![deny(dead_code)]
 #![deny(unused_variables)]
 
+pub mod assets;
 pub mod backoff;
 pub mod cli;
 pub mod config;
@@ -17,6 +18,7 @@ pub mod logging;
 pub mod markdown;
 pub mod migrate;
 pub mod ntfy;
+pub mod ocr;
 pub mod pipeline;
 pub mod router;
 pub mod routes;
@@ -202,6 +204,54 @@ pub async fn run_note(config: Config, text: String, tags: Option<Vec<String>>) -
         tags.unwrap_or_default(),
         types::IngestMethod::Cli,
         false,
+        &config,
+    )
+    .await;
+
+    match &result.status {
+        types::IngestStatus::Completed => {
+            let title = result.title.as_deref().unwrap_or("Untitled");
+            let path = result.note_path.as_deref().unwrap_or("unknown");
+            println!("Captured: \"{title}\" -> {path}");
+        }
+        types::IngestStatus::Failed { reason } => {
+            eprintln!("Error: {reason}");
+            std::process::exit(1);
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+pub async fn run_file_ingest(
+    config: Config,
+    file_path: std::path::PathBuf,
+    tags: Option<Vec<String>>,
+    force: bool,
+) -> Result<()> {
+    let filename = file_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let data = std::fs::read(&file_path).context(format!("Failed to read file: {}", file_path.display()))?;
+
+    let content = if assets::is_image_extension(&filename) {
+        types::ContentKind::Image { data, filename }
+    } else {
+        eyre::bail!(
+            "Unsupported file type: {}. Supported image extensions: {}",
+            filename,
+            assets::IMAGE_EXTENSIONS.join(", ")
+        );
+    };
+
+    let result = pipeline::process_content(
+        content,
+        tags.unwrap_or_default(),
+        types::IngestMethod::Cli,
+        force,
         &config,
     )
     .await;

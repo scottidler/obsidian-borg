@@ -29,16 +29,21 @@ async fn main() -> Result<()> {
         Some(Command::Ingest {
             url,
             clipboard,
+            file,
             tags,
             force,
         }) => {
-            let resolved_url = obsidian_borg::resolve_ingest_url(url, clipboard)?;
-            let method = if clipboard {
-                obsidian_borg::types::IngestMethod::Clipboard
+            if let Some(file_path) = file {
+                obsidian_borg::run_file_ingest(config, file_path, tags, force).await
             } else {
-                obsidian_borg::types::IngestMethod::Cli
-            };
-            obsidian_borg::run_ingest(config, resolved_url, tags, force, clipboard, method).await
+                let resolved_url = obsidian_borg::resolve_ingest_url(url, clipboard)?;
+                let method = if clipboard {
+                    obsidian_borg::types::IngestMethod::Clipboard
+                } else {
+                    obsidian_borg::types::IngestMethod::Cli
+                };
+                obsidian_borg::run_ingest(config, resolved_url, tags, force, clipboard, method).await
+            }
         }
         Some(Command::Note { text, clipboard, tags }) => {
             let resolved_text = obsidian_borg::resolve_note_text(text, clipboard)?;

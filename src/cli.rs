@@ -35,11 +35,14 @@ pub enum Command {
     Daemon(DaemonOpts),
     /// Send a URL to the running daemon for ingestion
     Ingest {
-        /// URL to ingest (omit when using --clipboard)
+        /// URL to ingest (omit when using --clipboard or --file)
         url: Option<String>,
         /// Read URL from system clipboard
         #[arg(long)]
         clipboard: bool,
+        /// Ingest a local file (image, pdf, etc.)
+        #[arg(long)]
+        file: Option<PathBuf>,
         /// Comma-separated tags
         #[arg(short, long, value_delimiter = ',')]
         tags: Option<Vec<String>>,
@@ -314,13 +317,47 @@ mod tests {
             Some(Command::Ingest {
                 url,
                 clipboard,
+                file,
                 tags,
                 force,
             }) => {
                 assert_eq!(url, Some("https://example.com".to_string()));
                 assert!(!clipboard);
+                assert!(file.is_none());
                 assert!(tags.is_none());
                 assert!(!force);
+            }
+            _ => panic!("expected Ingest"),
+        }
+    }
+
+    #[test]
+    fn test_ingest_with_file() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "ingest", "--file", "/tmp/photo.png"]).expect("parse");
+        match cli.command {
+            Some(Command::Ingest { url, file, .. }) => {
+                assert!(url.is_none());
+                assert_eq!(file, Some(PathBuf::from("/tmp/photo.png")));
+            }
+            _ => panic!("expected Ingest"),
+        }
+    }
+
+    #[test]
+    fn test_ingest_with_file_and_tags() {
+        let cli = Cli::try_parse_from([
+            "obsidian-borg",
+            "ingest",
+            "--file",
+            "/tmp/diagram.jpg",
+            "-t",
+            "diagram,whiteboard",
+        ])
+        .expect("parse");
+        match cli.command {
+            Some(Command::Ingest { file, tags, .. }) => {
+                assert_eq!(file, Some(PathBuf::from("/tmp/diagram.jpg")));
+                assert_eq!(tags, Some(vec!["diagram".to_string(), "whiteboard".to_string()]));
             }
             _ => panic!("expected Ingest"),
         }
