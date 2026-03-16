@@ -1949,7 +1949,7 @@ dependencies = [
 
 [[package]]
 name = "obsidian-borg"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "arboard",
  "axum",

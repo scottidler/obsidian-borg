@@ -568,6 +568,7 @@ StartLimitIntervalSec=60
 Type=simple
 ExecStartPre=/bin/sh -c '{manifest} age decrypt {secrets} -f env > {env_file}'
 EnvironmentFile=-{env_file}
+Environment="PATH={home}/.local/bin:{home}/.cargo/bin:{home}/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart={exe_path} daemon --start
 Restart=always
 RestartSec=5
