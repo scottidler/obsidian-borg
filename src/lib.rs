@@ -24,6 +24,7 @@ pub mod pipeline;
 pub mod router;
 pub mod routes;
 pub mod telegram;
+pub mod trace;
 pub mod transcription;
 pub mod types;
 pub mod youtube;

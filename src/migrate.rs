@@ -142,6 +142,7 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
                     .parent()
                     .and_then(|p| p.strip_prefix(&vault_root).ok())
                     .map(|p| p.display().to_string()),
+                trace_id: None,
             });
         }
     }

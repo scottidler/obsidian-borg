@@ -30,6 +30,7 @@ pub struct LedgerEntry {
     pub title: Option<String>,
     pub source: String,
     pub folder: Option<String>,
+    pub trace_id: Option<String>,
 }
 
 const LEDGER_FRONTMATTER: &str = r#"---
@@ -215,6 +216,7 @@ mod tests {
             title: Some("Test Article".to_string()),
             source: "https://example.com/article".to_string(),
             folder: Some("📥 Inbox".to_string()),
+            trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
 
@@ -242,6 +244,7 @@ mod tests {
             title: None,
             source: "https://example.com/broken".to_string(),
             folder: None,
+            trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
 
@@ -265,6 +268,7 @@ mod tests {
             title: None,
             source: "https://example.com/dup".to_string(),
             folder: None,
+            trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
 

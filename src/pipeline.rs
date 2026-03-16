@@ -8,6 +8,7 @@ use crate::ledger::{self, LedgerEntry, LedgerStatus};
 use crate::markdown::{self, ContentType, NoteContent};
 use crate::ocr;
 use crate::router;
+use crate::trace;
 use crate::transcription::TranscriptionClient;
 use crate::types::{AudioFormat, ContentKind, IngestMethod, IngestResult, IngestStatus};
 use crate::youtube;
@@ -101,18 +102,46 @@ pub async fn process_content(
     force: bool,
     config: &Config,
 ) -> IngestResult {
-    match content {
-        ContentKind::Url(url) => process_url(&url, tags, method, force, config).await,
-        ContentKind::Image { data, filename } => process_image(&data, &filename, tags, method, force, config).await,
+    let trace_id = trace::generate(method);
+    log::info!("[{trace_id}] Starting ingest: method={method}");
+    let mut result = match content {
+        ContentKind::Url(url) => process_url(&url, tags, method, force, config, &trace_id).await,
+        ContentKind::Image { data, filename } => {
+            process_image(&data, &filename, tags, method, force, config, &trace_id).await
+        }
         ContentKind::Pdf { data, filename } => {
-            process_document_file(&data, &filename, tags, method, force, config, DocumentKind::Pdf).await
+            process_document_file(
+                &data,
+                &filename,
+                tags,
+                method,
+                force,
+                config,
+                DocumentKind::Pdf,
+                &trace_id,
+            )
+            .await
         }
-        ContentKind::Audio { data, filename } => process_audio(&data, &filename, tags, method, force, config).await,
-        ContentKind::Text(text) => process_text(&text, tags, method, force, config).await,
+        ContentKind::Audio { data, filename } => {
+            process_audio(&data, &filename, tags, method, force, config, &trace_id).await
+        }
+        ContentKind::Text(text) => process_text(&text, tags, method, force, config, &trace_id).await,
         ContentKind::Document { data, filename } => {
-            process_document_file(&data, &filename, tags, method, force, config, DocumentKind::Document).await
+            process_document_file(
+                &data,
+                &filename,
+                tags,
+                method,
+                force,
+                config,
+                DocumentKind::Document,
+                &trace_id,
+            )
+            .await
         }
-    }
+    };
+    result.trace_id = Some(trace_id);
+    result
 }
 
 pub async fn process_url(
@@ -121,18 +150,19 @@ pub async fn process_url(
     method: IngestMethod,
     force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> IngestResult {
     let start = Instant::now();
-    match process_url_inner(url, tags, method, force, config).await {
+    match process_url_inner(url, tags, method, force, config, trace_id).await {
         Ok(mut result) => {
             let elapsed = start.elapsed();
-            log::info!("Pipeline completed for {url} in {elapsed:.2?}");
+            log::info!("[{trace_id}] Pipeline completed for {url} in {elapsed:.2?}");
             result.elapsed_secs = Some(elapsed.as_secs_f64());
             result
         }
         Err(e) => {
             let elapsed = start.elapsed();
-            log::error!("Pipeline failed for {url} in {elapsed:.2?}: {e:?}");
+            log::error!("[{trace_id}] Pipeline failed for {url} in {elapsed:.2?}: {e:?}");
             let reason = format!("{:#}", e);
 
             // Best-effort log failure to Borg Ledger
@@ -157,6 +187,7 @@ pub async fn process_url(
                     title: None,
                     source: canonical.clone(),
                     folder: None,
+                    trace_id: Some(trace_id.to_string()),
                 },
             );
 
@@ -169,6 +200,7 @@ pub async fn process_url(
                 folder: None,
                 method: Some(method),
                 canonical_url: Some(canonical),
+                trace_id: None,
             }
         }
     }
@@ -180,6 +212,7 @@ async fn process_url_inner(
     method: IngestMethod,
     force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     log::debug!("Processing URL: {url}");
 
@@ -187,7 +220,7 @@ async fn process_url_inner(
     let canonical = hygiene::normalize_url(url, &config.canonicalization.rules)?;
     log::debug!("Canonical URL: {canonical}");
     if canonical != url {
-        log::info!("URL canonicalized: {url} -> {canonical}");
+        log::info!("[{trace_id}] URL canonicalized: {url} -> {canonical}");
     }
 
     // Get timezone for log timestamps
@@ -207,7 +240,7 @@ async fn process_url_inner(
         {
             let mut inflight = INFLIGHT.lock().await;
             if inflight.contains(&canonical) {
-                log::info!("Duplicate URL (inflight): {canonical}");
+                log::info!("[{trace_id}] Duplicate URL (inflight): {canonical}");
                 ledger::append_entry(
                     &ledger_file,
                     &LedgerEntry {
@@ -218,6 +251,7 @@ async fn process_url_inner(
                         title: None,
                         source: canonical.clone(),
                         folder: None,
+                        trace_id: Some(trace_id.to_string()),
                     },
                 )?;
                 return Ok(IngestResult {
@@ -235,7 +269,7 @@ async fn process_url_inner(
         // Then check ledger (durable dedup)
         if let Some(original_date) = ledger::check_duplicate(&ledger_file, &canonical)? {
             INFLIGHT.lock().await.remove(&canonical);
-            log::info!("Duplicate URL: {canonical} (first ingested {original_date})");
+            log::info!("[{trace_id}] Duplicate URL: {canonical} (first ingested {original_date})");
             ledger::append_entry(
                 &ledger_file,
                 &LedgerEntry {
@@ -246,6 +280,7 @@ async fn process_url_inner(
                     title: None,
                     source: canonical.clone(),
                     folder: None,
+                    trace_id: Some(trace_id.to_string()),
                 },
             )?;
             return Ok(IngestResult {
@@ -266,7 +301,7 @@ async fn process_url_inner(
 
     let use_fabric = fabric::is_available(&config.fabric);
     if !use_fabric {
-        log::warn!("Fabric binary not available, falling back to legacy pipeline");
+        log::warn!("[{trace_id}] Fabric binary not available, falling back to legacy pipeline");
     }
 
     let (title, summary, content_type) = if url_match.is_youtube_type() {
@@ -355,6 +390,7 @@ async fn process_url_inner(
         content_type,
         embed_code,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -372,7 +408,7 @@ async fn process_url_inner(
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
-    log::info!("Wrote note: {} (folder: {})", note_path.display(), folder);
+    log::info!("[{trace_id}] Wrote note: {} (folder: {})", note_path.display(), folder);
 
     // Log success to Borg Ledger
     ledger::append_entry(
@@ -385,6 +421,7 @@ async fn process_url_inner(
             title: Some(title.clone()),
             source: canonical.clone(),
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -400,6 +437,7 @@ async fn process_url_inner(
         folder: Some(folder),
         method: Some(method),
         canonical_url: Some(canonical),
+        trace_id: None,
     })
 }
 
@@ -507,18 +545,19 @@ async fn process_image(
     method: IngestMethod,
     _force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> IngestResult {
     let start = Instant::now();
-    match process_image_inner(data, filename, tags, method, config).await {
+    match process_image_inner(data, filename, tags, method, config, trace_id).await {
         Ok(mut result) => {
             let elapsed = start.elapsed();
-            log::info!("Image pipeline completed in {elapsed:.2?}");
+            log::info!("[{trace_id}] Image pipeline completed in {elapsed:.2?}");
             result.elapsed_secs = Some(elapsed.as_secs_f64());
             result
         }
         Err(e) => {
             let elapsed = start.elapsed();
-            log::error!("Image pipeline failed in {elapsed:.2?}: {e:?}");
+            log::error!("[{trace_id}] Image pipeline failed in {elapsed:.2?}: {e:?}");
             IngestResult {
                 status: IngestStatus::Failed {
                     reason: format!("{:#}", e),
@@ -537,6 +576,7 @@ async fn process_image_inner(
     tags: Vec<String>,
     method: IngestMethod,
     config: &Config,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     let tz: chrono_tz::Tz = config
         .frontmatter
@@ -555,7 +595,7 @@ async fn process_image_inner(
     let (_abs_path, rel_path) =
         assets::store_asset(&vault_root, data, filename, &subdirectory).context("Failed to store image asset")?;
 
-    log::info!("Stored image asset: {rel_path}");
+    log::info!("[{trace_id}] Stored image asset: {rel_path}");
 
     // Write to temp file for OCR
     let temp_dir = std::env::temp_dir().join("obsidian-borg");
@@ -696,6 +736,7 @@ async fn process_image_inner(
         content_type: ContentType::Image { asset_path: rel_path },
         embed_code: None,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -712,7 +753,11 @@ async fn process_image_inner(
     let note_path = dest_path.join(&note_filename);
     std::fs::write(&note_path, &rendered).context("Failed to write image note to vault")?;
 
-    log::info!("Wrote image note: {} (folder: {})", note_path.display(), folder);
+    log::info!(
+        "[{trace_id}] Wrote image note: {} (folder: {})",
+        note_path.display(),
+        folder
+    );
 
     // Clean up temp file
     let _ = std::fs::remove_file(&temp_path);
@@ -730,6 +775,7 @@ async fn process_image_inner(
             title: Some(title.clone()),
             source: source_display,
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -742,6 +788,7 @@ async fn process_image_inner(
         folder: Some(folder),
         method: Some(method),
         canonical_url: None,
+        trace_id: None,
     })
 }
 
@@ -762,18 +809,19 @@ async fn process_audio(
     method: IngestMethod,
     _force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> IngestResult {
     let start = Instant::now();
-    match process_audio_inner(data, filename, tags, method, config).await {
+    match process_audio_inner(data, filename, tags, method, config, trace_id).await {
         Ok(mut result) => {
             let elapsed = start.elapsed();
-            log::info!("Audio pipeline completed in {elapsed:.2?}");
+            log::info!("[{trace_id}] Audio pipeline completed in {elapsed:.2?}");
             result.elapsed_secs = Some(elapsed.as_secs_f64());
             result
         }
         Err(e) => {
             let elapsed = start.elapsed();
-            log::error!("Audio pipeline failed in {elapsed:.2?}: {e:?}");
+            log::error!("[{trace_id}] Audio pipeline failed in {elapsed:.2?}: {e:?}");
             IngestResult {
                 status: IngestStatus::Failed {
                     reason: format!("{:#}", e),
@@ -803,6 +851,7 @@ async fn process_audio_inner(
     tags: Vec<String>,
     method: IngestMethod,
     config: &Config,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     let tz: chrono_tz::Tz = config
         .frontmatter
@@ -821,7 +870,7 @@ async fn process_audio_inner(
     let (_abs_path, rel_path) =
         assets::store_asset(&vault_root, data, filename, &subdirectory).context("Failed to store audio asset")?;
 
-    log::info!("Stored audio asset: {rel_path}");
+    log::info!("[{trace_id}] Stored audio asset: {rel_path}");
 
     // Determine audio format for transcription
     let audio_format = audio_format_from_extension(filename);
@@ -939,6 +988,7 @@ async fn process_audio_inner(
         },
         embed_code: None,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -955,7 +1005,11 @@ async fn process_audio_inner(
     let note_path = dest_path.join(&note_filename);
     std::fs::write(&note_path, &rendered).context("Failed to write audio note to vault")?;
 
-    log::info!("Wrote audio note: {} (folder: {})", note_path.display(), folder);
+    log::info!(
+        "[{trace_id}] Wrote audio note: {} (folder: {})",
+        note_path.display(),
+        folder
+    );
 
     // Log to ledger
     let ledger_file = ledger::ledger_path(config);
@@ -970,6 +1024,7 @@ async fn process_audio_inner(
             title: Some(title.clone()),
             source: source_display,
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -982,6 +1037,7 @@ async fn process_audio_inner(
         folder: Some(folder),
         method: Some(method),
         canonical_url: None,
+        trace_id: None,
     })
 }
 
@@ -1022,6 +1078,7 @@ impl DocumentKind {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_document_file(
     data: &[u8],
     filename: &str,
@@ -1030,19 +1087,23 @@ async fn process_document_file(
     _force: bool,
     config: &Config,
     kind: DocumentKind,
+    trace_id: &str,
 ) -> IngestResult {
     let start = Instant::now();
-    match process_document_file_inner(data, filename, tags, method, config, kind).await {
+    match process_document_file_inner(data, filename, tags, method, config, kind, trace_id).await {
         Ok(mut result) => {
             let elapsed = start.elapsed();
-            log::info!("{} pipeline completed in {elapsed:.2?}", kind.label().to_uppercase());
+            log::info!(
+                "[{trace_id}] {} pipeline completed in {elapsed:.2?}",
+                kind.label().to_uppercase()
+            );
             result.elapsed_secs = Some(elapsed.as_secs_f64());
             result
         }
         Err(e) => {
             let elapsed = start.elapsed();
             log::error!(
-                "{} pipeline failed in {elapsed:.2?}: {e:?}",
+                "[{trace_id}] {} pipeline failed in {elapsed:.2?}: {e:?}",
                 kind.label().to_uppercase()
             );
             IngestResult {
@@ -1057,6 +1118,7 @@ async fn process_document_file(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_document_file_inner(
     data: &[u8],
     filename: &str,
@@ -1064,6 +1126,7 @@ async fn process_document_file_inner(
     method: IngestMethod,
     config: &Config,
     kind: DocumentKind,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     let tz: chrono_tz::Tz = config
         .frontmatter
@@ -1079,7 +1142,7 @@ async fn process_document_file_inner(
     let (_abs_path, rel_path) = assets::store_asset(&vault_root, data, filename, kind.subdirectory())
         .context(format!("Failed to store {} asset", kind.label()))?;
 
-    log::info!("Stored {} asset: {rel_path}", kind.label());
+    log::info!("[{trace_id}] Stored {} asset: {rel_path}", kind.label());
 
     // Write to temp file for text extraction
     let temp_dir = std::env::temp_dir().join("obsidian-borg");
@@ -1207,6 +1270,7 @@ async fn process_document_file_inner(
         content_type: kind.content_type(rel_path),
         embed_code: None,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -1224,7 +1288,7 @@ async fn process_document_file_inner(
     std::fs::write(&note_path, &rendered).context(format!("Failed to write {} note to vault", kind.label()))?;
 
     log::info!(
-        "Wrote {} note: {} (folder: {})",
+        "[{trace_id}] Wrote {} note: {} (folder: {})",
         kind.label(),
         note_path.display(),
         folder
@@ -1246,6 +1310,7 @@ async fn process_document_file_inner(
             title: Some(title.clone()),
             source: source_display,
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -1258,6 +1323,7 @@ async fn process_document_file_inner(
         folder: Some(folder),
         method: Some(method),
         canonical_url: None,
+        trace_id: None,
     })
 }
 
@@ -1315,18 +1381,19 @@ async fn process_text(
     method: IngestMethod,
     force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> IngestResult {
     let start = Instant::now();
-    match process_text_inner(text, tags, method, force, config).await {
+    match process_text_inner(text, tags, method, force, config, trace_id).await {
         Ok(mut result) => {
             let elapsed = start.elapsed();
-            log::info!("Text pipeline completed in {elapsed:.2?}");
+            log::info!("[{trace_id}] Text pipeline completed in {elapsed:.2?}");
             result.elapsed_secs = Some(elapsed.as_secs_f64());
             result
         }
         Err(e) => {
             let elapsed = start.elapsed();
-            log::error!("Text pipeline failed in {elapsed:.2?}: {e:?}");
+            log::error!("[{trace_id}] Text pipeline failed in {elapsed:.2?}: {e:?}");
             IngestResult {
                 status: IngestStatus::Failed {
                     reason: format!("{:#}", e),
@@ -1345,6 +1412,7 @@ async fn process_text_inner(
     method: IngestMethod,
     force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     let pattern = detect_text_pattern(text);
     log::debug!("Text pattern detected: {pattern:?}");
@@ -1352,17 +1420,17 @@ async fn process_text_inner(
     match pattern {
         TextPattern::ContainsUrl(url) => {
             // Redirect to URL pipeline
-            return Ok(process_url(&url, tags, method, force, config).await);
+            return Ok(process_url(&url, tags, method, force, config, trace_id).await);
         }
         TextPattern::Define { .. } | TextPattern::Clarify { .. } => {
-            return process_vocab(text, &pattern, tags, method, force, config).await;
+            return process_vocab(text, &pattern, tags, method, force, config, trace_id).await;
         }
         TextPattern::General => {}
     }
 
     // Code snippet detection (after pattern matching / URL redirect, before general LLM classification)
     if let Some(language) = looks_like_code(text) {
-        return process_code_snippet(text, &language, tags, method, config).await;
+        return process_code_snippet(text, &language, tags, method, config, trace_id).await;
     }
 
     // General text: classify via LLM, then create a note
@@ -1418,6 +1486,7 @@ async fn process_text_inner(
         content_type: ContentType::Note,
         embed_code: None,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -1434,7 +1503,11 @@ async fn process_text_inner(
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
-    log::info!("Wrote text note: {} (folder: {})", note_path.display(), folder);
+    log::info!(
+        "[{trace_id}] Wrote text note: {} (folder: {})",
+        note_path.display(),
+        folder
+    );
 
     // Log to ledger
     let ledger_file = ledger::ledger_path(config);
@@ -1452,6 +1525,7 @@ async fn process_text_inner(
             title: Some(title.clone()),
             source: source_display,
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -1464,6 +1538,7 @@ async fn process_text_inner(
         folder: Some(folder),
         method: Some(method),
         canonical_url: None,
+        trace_id: None,
     })
 }
 
@@ -1474,6 +1549,7 @@ async fn process_vocab(
     method: IngestMethod,
     _force: bool,
     config: &Config,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     let tz: chrono_tz::Tz = config
         .frontmatter
@@ -1569,6 +1645,7 @@ async fn process_vocab(
         content_type,
         embed_code: None,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -1585,7 +1662,11 @@ async fn process_vocab(
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
-    log::info!("Wrote vocab note: {} (folder: {})", note_path.display(), folder);
+    log::info!(
+        "[{trace_id}] Wrote vocab note: {} (folder: {})",
+        note_path.display(),
+        folder
+    );
 
     // Log to ledger
     let ledger_file = ledger::ledger_path(config);
@@ -1599,6 +1680,7 @@ async fn process_vocab(
             title: Some(title.clone()),
             source: format!("[{}]", text.trim()),
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -1611,6 +1693,7 @@ async fn process_vocab(
         folder: Some(folder),
         method: Some(method),
         canonical_url: None,
+        trace_id: None,
     })
 }
 
@@ -1922,6 +2005,7 @@ async fn process_code_snippet(
     tags: Vec<String>,
     method: IngestMethod,
     config: &Config,
+    trace_id: &str,
 ) -> Result<IngestResult> {
     let tz: chrono_tz::Tz = config
         .frontmatter
@@ -1965,6 +2049,7 @@ async fn process_code_snippet(
         },
         embed_code: None,
         method: Some(method),
+        trace_id: Some(trace_id.to_string()),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
@@ -1982,7 +2067,7 @@ async fn process_code_snippet(
     std::fs::write(&note_path, &rendered).context("Failed to write code note to vault")?;
 
     log::info!(
-        "Wrote code snippet note: {} (folder: {}, language: {})",
+        "[{trace_id}] Wrote code snippet note: {} (folder: {}, language: {})",
         note_path.display(),
         folder,
         language
@@ -2001,6 +2086,7 @@ async fn process_code_snippet(
             title: Some(title.clone()),
             source: source_display,
             folder: Some(folder.clone()),
+            trace_id: Some(trace_id.to_string()),
         },
     )?;
 
@@ -2013,6 +2099,7 @@ async fn process_code_snippet(
         folder: Some(folder),
         method: Some(method),
         canonical_url: None,
+        trace_id: None,
     })
 }
 
@@ -2451,6 +2538,7 @@ int main() {
             },
             embed_code: None,
             method: Some(IngestMethod::Cli),
+            trace_id: None,
         };
         let rendered = markdown::render_note(
             &note,

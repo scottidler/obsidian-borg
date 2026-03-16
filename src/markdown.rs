@@ -13,6 +13,7 @@ pub struct NoteContent {
     pub content_type: ContentType,
     pub embed_code: Option<String>,
     pub method: Option<IngestMethod>,
+    pub trace_id: Option<String>,
 }
 
 pub enum ContentType {
@@ -200,6 +201,7 @@ mod tests {
             content_type: ContentType::Article,
             embed_code: None,
             method: None,
+            trace_id: None,
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("title: \"Test Article\""));
@@ -226,6 +228,7 @@ mod tests {
             },
             embed_code: Some(r#"<iframe width="854" height="480" src="https://www.youtube.com/embed/abc" frameborder="0" allowfullscreen></iframe>"#.to_string()),
             method: Some(IngestMethod::Telegram),
+            trace_id: None,
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: youtube"));
@@ -252,6 +255,7 @@ mod tests {
             content_type: ContentType::Article,
             embed_code: None,
             method: None,
+            trace_id: None,
         };
         let rendered = render_note(&note, &config);
         assert!(rendered.contains("  - ai"));
@@ -270,6 +274,7 @@ mod tests {
             content_type: ContentType::Note,
             embed_code: None,
             method: Some(IngestMethod::Telegram),
+            trace_id: None,
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: note"));
@@ -290,6 +295,7 @@ mod tests {
             },
             embed_code: None,
             method: Some(IngestMethod::Cli),
+            trace_id: None,
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: image"));
