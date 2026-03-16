@@ -45,8 +45,8 @@ tags:
 
 All URLs ingested by obsidian-borg. This file is machine-maintained — do not edit the table manually.
 
-| Date | Time | Method | Status | Title | Source | Folder |
-|------|------|--------|--------|-------|--------|--------|
+| Date | Time | Method | Status | Title | Source | Folder | Trace |
+|------|------|--------|--------|-------|--------|--------|-------|
 "#;
 
 /// Resolve the Borg Ledger path from config.
@@ -122,10 +122,11 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
         .map(|t| format!("[[{}]]", t))
         .unwrap_or_else(|| "—".to_string());
     let folder_display = entry.folder.as_deref().unwrap_or("—");
+    let trace_display = entry.trace_id.as_deref().unwrap_or("-");
 
     let row = format!(
-        "| {} | {} | {} | {} | {} | {} | {} |\n",
-        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, folder_display,
+        "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, folder_display, trace_display,
     );
 
     use std::io::Write;
@@ -284,5 +285,53 @@ mod tests {
         assert_eq!(format!("{}", LedgerStatus::Completed), "✅");
         assert_eq!(format!("{}", LedgerStatus::Failed), "❌");
         assert_eq!(format!("{}", LedgerStatus::Skipped), "⏭️");
+    }
+
+    #[test]
+    fn test_append_entry_with_trace_id() {
+        let path = temp_ledger_path().with_file_name("test-trace-id.md");
+        cleanup(&path);
+
+        let entry = LedgerEntry {
+            date: "2026-03-16".to_string(),
+            time: "12:01".to_string(),
+            method: IngestMethod::Telegram,
+            status: LedgerStatus::Completed,
+            title: Some("Test Note".to_string()),
+            source: "https://example.com".to_string(),
+            folder: Some("Work".to_string()),
+            trace_id: Some("tg-7f3a2c".to_string()),
+        };
+        append_entry(&path, &entry).expect("append");
+
+        let content = fs::read_to_string(&path).expect("read");
+        assert!(content.contains("| Trace |"), "header should have Trace column");
+        assert!(content.contains("tg-7f3a2c"), "row should contain trace ID");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_append_entry_without_trace_id() {
+        let path = temp_ledger_path().with_file_name("test-no-trace-id.md");
+        cleanup(&path);
+
+        let entry = LedgerEntry {
+            date: "2026-03-16".to_string(),
+            time: "12:01".to_string(),
+            method: IngestMethod::Cli,
+            status: LedgerStatus::Completed,
+            title: Some("Test".to_string()),
+            source: "https://example.com".to_string(),
+            folder: None,
+            trace_id: None,
+        };
+        append_entry(&path, &entry).expect("append");
+
+        let content = fs::read_to_string(&path).expect("read");
+        // When no trace_id, the column should show "-"
+        assert!(content.contains("| - |"), "missing trace should show dash");
+
+        cleanup(&path);
     }
 }

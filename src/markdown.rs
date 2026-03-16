@@ -101,6 +101,10 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         fm.push_str(&format!("method: {method}\n"));
     }
 
+    if let Some(ref tid) = note.trace_id {
+        fm.push_str(&format!("trace_id: {tid}\n"));
+    }
+
     fm.push_str(&format!("tags:\n{tags_yaml}\n"));
 
     if !frontmatter_config.default_author.is_empty() {
@@ -301,6 +305,45 @@ mod tests {
         assert!(rendered.contains("type: image"));
         assert!(rendered.contains("asset:"));
         assert!(rendered.contains("![[whiteboard-a1b2c3d4.png]]"));
+    }
+
+    #[test]
+    fn test_render_note_with_trace_id() {
+        let note = NoteContent {
+            title: "Trace Test".to_string(),
+            source_url: Some("https://example.com".to_string()),
+            asset_path: None,
+            tags: vec!["test".to_string()],
+            summary: "Summary.".to_string(),
+            content_type: ContentType::Article,
+            embed_code: None,
+            method: Some(IngestMethod::Telegram),
+            trace_id: Some("tg-7f3a2c".to_string()),
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(rendered.contains("trace_id: tg-7f3a2c"));
+        assert!(rendered.contains("method: telegram"));
+        // trace_id should appear after method
+        let method_pos = rendered.find("method: telegram").expect("method line");
+        let trace_pos = rendered.find("trace_id: tg-7f3a2c").expect("trace_id line");
+        assert!(trace_pos > method_pos, "trace_id should come after method");
+    }
+
+    #[test]
+    fn test_render_note_without_trace_id() {
+        let note = NoteContent {
+            title: "No Trace".to_string(),
+            source_url: None,
+            asset_path: None,
+            tags: vec![],
+            summary: String::new(),
+            content_type: ContentType::Note,
+            embed_code: None,
+            method: None,
+            trace_id: None,
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(!rendered.contains("trace_id"));
     }
 
     #[test]

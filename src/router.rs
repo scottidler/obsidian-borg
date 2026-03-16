@@ -82,6 +82,11 @@ pub fn extract_url_from_text(text: &str) -> Option<String> {
 
 pub fn format_reply(result: &IngestResult, url: &str) -> String {
     let elapsed = result.elapsed_secs.map(|s| format!(" ({:.1}s)", s)).unwrap_or_default();
+    let prefix = result
+        .trace_id
+        .as_ref()
+        .map(|tid| format!("[{tid}] "))
+        .unwrap_or_default();
 
     match &result.status {
         IngestStatus::Completed => {
@@ -104,15 +109,15 @@ pub fn format_reply(result: &IngestResult, url: &str) -> String {
                 .as_ref()
                 .map(|f| format!("\nFolder: {f}"))
                 .unwrap_or_default();
-            format!("Saved: {title}{elapsed}{tags}{folder_info}")
+            format!("{prefix}Saved: {title}{elapsed}{tags}{folder_info}")
         }
         IngestStatus::Duplicate { original_date } => {
-            format!("Duplicate{elapsed}: already ingested on {original_date}\nURL: {url}")
+            format!("{prefix}Duplicate{elapsed}: already ingested on {original_date}\nURL: {url}")
         }
         IngestStatus::Failed { reason } => {
-            format!("Failed{elapsed}: {reason}\nURL: {url}")
+            format!("{prefix}Failed{elapsed}: {reason}\nURL: {url}")
         }
-        IngestStatus::Queued => "Queued for processing.".to_string(),
+        IngestStatus::Queued => format!("{prefix}Queued for processing."),
     }
 }
 
@@ -330,5 +335,54 @@ mod tests {
         };
         let reply = format_reply(&result, "https://example.com");
         assert_eq!(reply, "Queued for processing.");
+    }
+
+    #[test]
+    fn test_format_reply_with_trace_id_completed() {
+        let result = IngestResult {
+            status: IngestStatus::Completed,
+            title: Some("Test Article".to_string()),
+            tags: vec!["ai".to_string()],
+            elapsed_secs: Some(5.7),
+            folder: Some("Work".to_string()),
+            trace_id: Some("tg-7f3a2c".to_string()),
+            ..Default::default()
+        };
+        let reply = format_reply(&result, "https://example.com");
+        assert_eq!(reply, "[tg-7f3a2c] Saved: Test Article (5.7s)\nTags: #ai\nFolder: Work");
+    }
+
+    #[test]
+    fn test_format_reply_with_trace_id_duplicate() {
+        let result = IngestResult {
+            status: IngestStatus::Duplicate {
+                original_date: "2026-03-16".to_string(),
+            },
+            elapsed_secs: Some(0.001),
+            trace_id: Some("tg-7f3a2c".to_string()),
+            ..Default::default()
+        };
+        let reply = format_reply(&result, "https://example.com");
+        assert_eq!(
+            reply,
+            "[tg-7f3a2c] Duplicate (0.0s): already ingested on 2026-03-16\nURL: https://example.com"
+        );
+    }
+
+    #[test]
+    fn test_format_reply_with_trace_id_failed() {
+        let result = IngestResult {
+            status: IngestStatus::Failed {
+                reason: "connection timeout".to_string(),
+            },
+            elapsed_secs: Some(0.3),
+            trace_id: Some("tg-7f3a2c".to_string()),
+            ..Default::default()
+        };
+        let reply = format_reply(&result, "https://example.com");
+        assert_eq!(
+            reply,
+            "[tg-7f3a2c] Failed (0.3s): connection timeout\nURL: https://example.com"
+        );
     }
 }
