@@ -179,8 +179,25 @@ pub struct Config {
     pub canonicalization: CanonicalConfig,
     pub migration: MigrationConfig,
     pub text_capture: TextCaptureConfig,
+    pub vision: VisionConfig,
     pub log_level: Option<String>,
     pub debug: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VisionConfig {
+    pub enabled: bool,
+    pub model: String,
+}
+
+impl Default for VisionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            model: String::new(), // empty = use llm.model
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
