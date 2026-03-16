@@ -26,7 +26,17 @@ struct JsonBody {
     force: bool,
 }
 
-fn parse_message(message: &str) -> Option<(String, Vec<String>, bool)> {
+#[derive(Debug, PartialEq)]
+enum ParsedMessage {
+    Url {
+        url: String,
+        tags: Vec<String>,
+        force: bool,
+    },
+    Text(String),
+}
+
+fn parse_message(message: &str) -> Option<ParsedMessage> {
     let trimmed = message.trim();
     if trimmed.is_empty() {
         return None;
@@ -36,11 +46,23 @@ fn parse_message(message: &str) -> Option<(String, Vec<String>, bool)> {
     if trimmed.starts_with('{')
         && let Ok(body) = serde_json::from_str::<JsonBody>(trimmed)
     {
-        return Some((body.url, body.tags, body.force));
+        return Some(ParsedMessage::Url {
+            url: body.url,
+            tags: body.tags,
+            force: body.force,
+        });
     }
 
-    // Plain text: extract first URL
-    extract_url_from_text(trimmed).map(|url| (url, vec![], false))
+    // Plain text: extract first URL, or fall back to text capture
+    if let Some(url) = extract_url_from_text(trimmed) {
+        Some(ParsedMessage::Url {
+            url,
+            tags: vec![],
+            force: false,
+        })
+    } else {
+        Some(ParsedMessage::Text(trimmed.to_string()))
+    }
 }
 
 pub async fn run(server: String, topic: String, token: Option<String>, config: Arc<Config>) -> Result<()> {
@@ -102,18 +124,31 @@ pub async fn run(server: String, topic: String, token: Option<String>, config: A
 
             backoff.reset();
 
-            let Some((url, tags, force)) = parse_message(&event.message) else {
-                log::info!("ntfy: no URL found in message: {:?}", event.message);
+            let Some(parsed) = parse_message(&event.message) else {
+                log::info!("ntfy: empty message, skipping");
                 continue;
             };
 
-            log::info!("ntfy: processing URL {url}");
-            let cfg = config.clone();
-            tokio::spawn(async move {
-                let content = ContentKind::Url(url.clone());
-                let result = pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg).await;
-                log::info!("ntfy: pipeline result for {url}: {:?}", result.status);
-            });
+            match parsed {
+                ParsedMessage::Url { url, tags, force } => {
+                    log::info!("ntfy: processing URL {url}");
+                    let cfg = config.clone();
+                    tokio::spawn(async move {
+                        let content = ContentKind::Url(url.clone());
+                        let result = pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg).await;
+                        log::info!("ntfy: pipeline result for {url}: {:?}", result.status);
+                    });
+                }
+                ParsedMessage::Text(text) => {
+                    log::info!("ntfy: processing text capture ({} chars)", text.len());
+                    let cfg = config.clone();
+                    tokio::spawn(async move {
+                        let content = ContentKind::Text(text);
+                        let result = pipeline::process_content(content, vec![], IngestMethod::Ntfy, false, &cfg).await;
+                        log::info!("ntfy: text capture result: {:?}", result.status);
+                    });
+                }
+            }
         }
 
         log::warn!("ntfy: stream ended, will reconnect");
@@ -130,7 +165,11 @@ mod tests {
         let result = parse_message("https://youtube.com/watch?v=abc123");
         assert_eq!(
             result,
-            Some(("https://youtube.com/watch?v=abc123".to_string(), vec![], false))
+            Some(ParsedMessage::Url {
+                url: "https://youtube.com/watch?v=abc123".to_string(),
+                tags: vec![],
+                force: false,
+            })
         );
     }
 
@@ -139,14 +178,25 @@ mod tests {
         let result = parse_message("Check out this video: https://youtube.com/watch?v=abc123");
         assert_eq!(
             result,
-            Some(("https://youtube.com/watch?v=abc123".to_string(), vec![], false))
+            Some(ParsedMessage::Url {
+                url: "https://youtube.com/watch?v=abc123".to_string(),
+                tags: vec![],
+                force: false,
+            })
         );
     }
 
     #[test]
     fn test_parse_google_discover_format() {
         let result = parse_message("Article Title\nhttps://example.com/article");
-        assert_eq!(result, Some(("https://example.com/article".to_string(), vec![], false)));
+        assert_eq!(
+            result,
+            Some(ParsedMessage::Url {
+                url: "https://example.com/article".to_string(),
+                tags: vec![],
+                force: false,
+            })
+        );
     }
 
     #[test]
@@ -154,18 +204,25 @@ mod tests {
         let result = parse_message(r#"{"url": "https://example.com", "tags": ["ai", "rust"], "force": true}"#);
         assert_eq!(
             result,
-            Some((
-                "https://example.com".to_string(),
-                vec!["ai".to_string(), "rust".to_string()],
-                true
-            ))
+            Some(ParsedMessage::Url {
+                url: "https://example.com".to_string(),
+                tags: vec!["ai".to_string(), "rust".to_string()],
+                force: true,
+            })
         );
     }
 
     #[test]
     fn test_parse_json_body_minimal() {
         let result = parse_message(r#"{"url": "https://example.com"}"#);
-        assert_eq!(result, Some(("https://example.com".to_string(), vec![], false)));
+        assert_eq!(
+            result,
+            Some(ParsedMessage::Url {
+                url: "https://example.com".to_string(),
+                tags: vec![],
+                force: false,
+            })
+        );
     }
 
     #[test]
@@ -175,13 +232,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_no_url() {
-        assert_eq!(parse_message("just some text without urls"), None);
+    fn test_parse_no_url_falls_back_to_text() {
+        let result = parse_message("just some text without urls");
+        assert_eq!(
+            result,
+            Some(ParsedMessage::Text("just some text without urls".to_string()))
+        );
     }
 
     #[test]
-    fn test_parse_invalid_json_falls_through_to_url_extraction() {
+    fn test_parse_invalid_json_falls_through_to_text() {
         let result = parse_message(r#"{"not_valid_json": }"#);
-        assert_eq!(result, None);
+        assert_eq!(result, Some(ParsedMessage::Text(r#"{"not_valid_json": }"#.to_string())));
     }
 }

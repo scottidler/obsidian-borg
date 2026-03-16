@@ -1,3 +1,4 @@
+use crate::assets;
 use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, DiscordConfig};
 use crate::pipeline;
@@ -9,6 +10,45 @@ use serenity::model::channel::Message;
 use serenity::model::gateway::GatewayIntents;
 use serenity::prelude::*;
 use std::sync::Arc;
+
+/// Classify a Discord attachment into a ContentKind based on content_type or filename extension.
+fn classify_attachment(data: Vec<u8>, filename: String, content_type: Option<&str>) -> Option<ContentKind> {
+    // Check content_type first
+    if let Some(ct) = content_type {
+        if ct.starts_with("image/") {
+            return Some(ContentKind::Image { data, filename });
+        }
+        if ct == "application/pdf" {
+            return Some(ContentKind::Pdf { data, filename });
+        }
+        if ct.starts_with("audio/") {
+            return Some(ContentKind::Audio { data, filename });
+        }
+        if ct.starts_with("application/vnd.")
+            || ct == "application/epub+zip"
+            || ct == "application/rtf"
+            || ct == "application/msword"
+        {
+            return Some(ContentKind::Document { data, filename });
+        }
+    }
+
+    // Fall back to extension-based detection
+    if assets::is_image_extension(&filename) {
+        return Some(ContentKind::Image { data, filename });
+    }
+    if assets::is_pdf_extension(&filename) {
+        return Some(ContentKind::Pdf { data, filename });
+    }
+    if assets::is_audio_extension(&filename) {
+        return Some(ContentKind::Audio { data, filename });
+    }
+    if assets::is_document_extension(&filename) {
+        return Some(ContentKind::Document { data, filename });
+    }
+
+    None
+}
 
 struct Handler {
     config: Arc<Config>,
@@ -22,6 +62,91 @@ impl EventHandler for Handler {
             return;
         }
 
+        // Priority 1: File attachment
+        if let Some(attachment) = msg.attachments.first() {
+            let att_filename = attachment.filename.clone();
+            let att_content_type = attachment.content_type.clone();
+            let att_url = attachment.url.clone();
+
+            log::info!(
+                "Discord: processing attachment '{}' (content_type: {}) from channel {}",
+                att_filename,
+                att_content_type.as_deref().unwrap_or("unknown"),
+                msg.channel_id
+            );
+
+            let data = match reqwest::get(&att_url).await {
+                Ok(resp) => match resp.bytes().await {
+                    Ok(bytes) => bytes.to_vec(),
+                    Err(e) => {
+                        log::error!("Discord: failed to read attachment bytes: {e}");
+                        let _ = msg
+                            .channel_id
+                            .say(&ctx.http, format!("Failed to download attachment: {e}"))
+                            .await;
+                        return;
+                    }
+                },
+                Err(e) => {
+                    log::error!("Discord: failed to download attachment: {e}");
+                    let _ = msg
+                        .channel_id
+                        .say(&ctx.http, format!("Failed to download attachment: {e}"))
+                        .await;
+                    return;
+                }
+            };
+
+            let content = classify_attachment(data, att_filename.clone(), att_content_type.as_deref());
+
+            match content {
+                Some(kind) => {
+                    let kind_label = match &kind {
+                        ContentKind::Image { .. } => "image",
+                        ContentKind::Pdf { .. } => "pdf",
+                        ContentKind::Audio { .. } => "audio",
+                        ContentKind::Document { .. } => "document",
+                        _ => "file",
+                    };
+                    let display_source = format!("[{}: {}]", kind_label, att_filename);
+
+                    let _ = msg
+                        .channel_id
+                        .say(&ctx.http, format!("Processing {kind_label}..."))
+                        .await;
+
+                    let result =
+                        pipeline::process_content(kind, vec![], IngestMethod::Discord, false, &self.config).await;
+                    let _ = msg
+                        .channel_id
+                        .say(&ctx.http, format_reply(&result, &display_source))
+                        .await;
+                }
+                None => {
+                    log::warn!(
+                        "Discord: unsupported attachment type '{}' (content_type: {})",
+                        att_filename,
+                        att_content_type.as_deref().unwrap_or("unknown")
+                    );
+                    let _ = msg
+                        .channel_id
+                        .say(
+                            &ctx.http,
+                            format!(
+                                "Unsupported file type: {} (content_type: {})",
+                                att_filename,
+                                att_content_type.as_deref().unwrap_or("unknown")
+                            ),
+                        )
+                        .await;
+                }
+            }
+
+            return;
+        }
+
+        // Priority 2: URL in text
+        // Priority 3: Plain text
         let (content, display_source) = if let Some(url) = extract_url_from_text(&msg.content) {
             (ContentKind::Url(url.clone()), url)
         } else if !msg.content.trim().is_empty() {
@@ -32,6 +157,7 @@ impl EventHandler for Handler {
             };
             (ContentKind::Text(msg.content.clone()), display)
         } else {
+            // Priority 4: Empty -> ignore
             return;
         };
 

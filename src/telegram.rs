@@ -1,3 +1,4 @@
+use crate::assets;
 use crate::backoff::ExponentialBackoff;
 use crate::config::{Config, TelegramConfig};
 use crate::pipeline;
@@ -5,9 +6,57 @@ use crate::router::{extract_url_from_text, format_reply};
 use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use std::sync::Arc;
+use teloxide::net::Download;
 use teloxide::prelude::*;
 use teloxide::requests::Requester;
-use teloxide::types::AllowedUpdate;
+use teloxide::types::{AllowedUpdate, FileId};
+
+/// Download a file from Telegram by its file_id.
+async fn download_telegram_file(bot: &Bot, file_id: &FileId) -> Result<Vec<u8>, teloxide::RequestError> {
+    let file = bot.get_file(file_id.clone()).await?;
+    let mut buf = Vec::new();
+    bot.download_file(&file.path, &mut buf).await?;
+    Ok(buf)
+}
+
+/// Determine ContentKind for a Telegram document based on MIME type and filename.
+fn classify_document(data: Vec<u8>, filename: String, mime_type: Option<&str>) -> Option<ContentKind> {
+    // Check MIME type first
+    if let Some(mime) = mime_type {
+        if mime.starts_with("image/") {
+            return Some(ContentKind::Image { data, filename });
+        }
+        if mime == "application/pdf" {
+            return Some(ContentKind::Pdf { data, filename });
+        }
+        if mime.starts_with("audio/") {
+            return Some(ContentKind::Audio { data, filename });
+        }
+        if mime.starts_with("application/vnd.")
+            || mime == "application/epub+zip"
+            || mime == "application/rtf"
+            || mime == "application/msword"
+        {
+            return Some(ContentKind::Document { data, filename });
+        }
+    }
+
+    // Fall back to extension-based detection
+    if assets::is_image_extension(&filename) {
+        return Some(ContentKind::Image { data, filename });
+    }
+    if assets::is_pdf_extension(&filename) {
+        return Some(ContentKind::Pdf { data, filename });
+    }
+    if assets::is_audio_extension(&filename) {
+        return Some(ContentKind::Audio { data, filename });
+    }
+    if assets::is_document_extension(&filename) {
+        return Some(ContentKind::Document { data, filename });
+    }
+
+    None
+}
 
 /// Claim the Telegram polling session by issuing a short getUpdates call.
 /// This invalidates any lingering long-poll from a previous process so the
@@ -76,15 +125,217 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     return Ok::<(), teloxide::RequestError>(());
                 }
 
-                let text = message.text().unwrap_or("");
-                log::debug!("Telegram message from chat {}: {text}", message.chat.id);
+                let chat_id = message.chat.id;
 
-                // Determine content kind: URL or plain text
+                // Priority 1: Photo attachment
+                if let Some(photos) = message.photo() {
+                    let largest = photos
+                        .iter()
+                        .max_by_key(|p| p.file.size)
+                        .expect("photo array is non-empty");
+                    let caption = message.caption().unwrap_or("").to_string();
+                    log::info!(
+                        "Telegram: processing image from chat {} (caption: {})",
+                        chat_id,
+                        if caption.is_empty() { "<none>" } else { &caption }
+                    );
+
+                    let data = match download_telegram_file(&bot, &largest.file.id).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::error!("Failed to download photo: {e}");
+                            bot.send_message(chat_id, format!("Failed to download photo: {e}"))
+                                .await?;
+                            return Ok(());
+                        }
+                    };
+
+                    let filename = format!("telegram-photo-{}.jpg", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+                    let display_source = format!("[image: {}]", filename);
+
+                    bot.send_message(chat_id, "Processing image...").await?;
+
+                    let content = ContentKind::Image { data, filename };
+                    let extra_tags: Vec<String> =
+                        if caption.is_empty() { vec![] } else { vec![format!("caption:{caption}")] };
+
+                    let bot_clone = bot.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            pipeline::process_content(content, extra_tags, IngestMethod::Telegram, false, &config)
+                                .await;
+                        log::debug!("Pipeline result: {:?}", result.status);
+                        let reply = format_reply(&result, &display_source);
+                        if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                            log::error!("Failed to send Telegram reply: {e}");
+                        }
+                    });
+
+                    return Ok(());
+                }
+
+                // Priority 2: Voice note
+                if let Some(voice) = message.voice() {
+                    log::info!(
+                        "Telegram: processing voice note from chat {} (duration: {}s)",
+                        chat_id,
+                        voice.duration
+                    );
+
+                    let data = match download_telegram_file(&bot, &voice.file.id).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::error!("Failed to download voice note: {e}");
+                            bot.send_message(chat_id, format!("Failed to download voice note: {e}"))
+                                .await?;
+                            return Ok(());
+                        }
+                    };
+
+                    let filename = format!("voice-{}.ogg", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+                    let display_source = format!("[voice: {}]", filename);
+
+                    bot.send_message(chat_id, "Processing voice note...").await?;
+
+                    let content = ContentKind::Audio { data, filename };
+
+                    let bot_clone = bot.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
+                        log::debug!("Pipeline result: {:?}", result.status);
+                        let reply = format_reply(&result, &display_source);
+                        if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                            log::error!("Failed to send Telegram reply: {e}");
+                        }
+                    });
+
+                    return Ok(());
+                }
+
+                // Priority 3: Audio file
+                if let Some(audio) = message.audio() {
+                    let original_name = audio.file_name.as_deref().unwrap_or("audio.mp3").to_string();
+                    log::info!(
+                        "Telegram: processing audio file '{}' from chat {}",
+                        original_name,
+                        chat_id
+                    );
+
+                    let data = match download_telegram_file(&bot, &audio.file.id).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::error!("Failed to download audio file: {e}");
+                            bot.send_message(chat_id, format!("Failed to download audio: {e}"))
+                                .await?;
+                            return Ok(());
+                        }
+                    };
+
+                    let display_source = format!("[audio: {}]", original_name);
+
+                    bot.send_message(chat_id, "Processing audio...").await?;
+
+                    let content = ContentKind::Audio {
+                        data,
+                        filename: original_name,
+                    };
+
+                    let bot_clone = bot.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            pipeline::process_content(content, vec![], IngestMethod::Telegram, false, &config).await;
+                        log::debug!("Pipeline result: {:?}", result.status);
+                        let reply = format_reply(&result, &display_source);
+                        if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                            log::error!("Failed to send Telegram reply: {e}");
+                        }
+                    });
+
+                    return Ok(());
+                }
+
+                // Priority 4: Document attachment
+                if let Some(doc) = message.document() {
+                    let doc_filename = doc.file_name.as_deref().unwrap_or("document").to_string();
+                    let mime_str = doc.mime_type.as_ref().map(|m| m.as_ref().to_string());
+                    log::info!(
+                        "Telegram: processing document '{}' (MIME: {}) from chat {}",
+                        doc_filename,
+                        mime_str.as_deref().unwrap_or("unknown"),
+                        chat_id
+                    );
+
+                    let data = match download_telegram_file(&bot, &doc.file.id).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::error!("Failed to download document: {e}");
+                            bot.send_message(chat_id, format!("Failed to download document: {e}"))
+                                .await?;
+                            return Ok(());
+                        }
+                    };
+
+                    let content = classify_document(data, doc_filename.clone(), mime_str.as_deref());
+
+                    match content {
+                        Some(kind) => {
+                            let kind_label = match &kind {
+                                ContentKind::Image { .. } => "image",
+                                ContentKind::Pdf { .. } => "pdf",
+                                ContentKind::Audio { .. } => "audio",
+                                ContentKind::Document { .. } => "document",
+                                _ => "file",
+                            };
+                            let display_source = format!("[{}: {}]", kind_label, doc_filename);
+                            let caption = message.caption().unwrap_or("").to_string();
+                            let extra_tags: Vec<String> =
+                                if caption.is_empty() { vec![] } else { vec![format!("caption:{caption}")] };
+
+                            bot.send_message(chat_id, format!("Processing {kind_label}...")).await?;
+
+                            let bot_clone = bot.clone();
+                            tokio::spawn(async move {
+                                let result =
+                                    pipeline::process_content(kind, extra_tags, IngestMethod::Telegram, false, &config)
+                                        .await;
+                                log::debug!("Pipeline result: {:?}", result.status);
+                                let reply = format_reply(&result, &display_source);
+                                if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                                    log::error!("Failed to send Telegram reply: {e}");
+                                }
+                            });
+                        }
+                        None => {
+                            log::warn!(
+                                "Telegram: unsupported document type '{}' (MIME: {})",
+                                doc_filename,
+                                mime_str.as_deref().unwrap_or("unknown")
+                            );
+                            bot.send_message(
+                                chat_id,
+                                format!(
+                                    "Unsupported file type: {} (MIME: {})",
+                                    doc_filename,
+                                    mime_str.as_deref().unwrap_or("unknown")
+                                ),
+                            )
+                            .await?;
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                // Priority 5 & 6: Text messages (URL or plain text)
+                let text = message.text().unwrap_or("");
+                log::debug!("Telegram message from chat {}: {text}", chat_id);
+
                 let (content, display_source) = if let Some(url) = extract_url_from_text(text) {
-                    log::info!("Telegram: processing URL {url} from chat {}", message.chat.id);
+                    log::info!("Telegram: processing URL {url} from chat {}", chat_id);
                     (ContentKind::Url(url.clone()), url)
                 } else if !text.trim().is_empty() {
-                    log::info!("Telegram: processing text from chat {}", message.chat.id);
+                    log::info!("Telegram: processing text from chat {}", chat_id);
                     let display = if text.len() > 50 { format!("{}...", &text[..50]) } else { text.to_string() };
                     (ContentKind::Text(text.to_string()), display)
                 } else {
@@ -92,9 +343,8 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     return Ok(());
                 };
 
-                bot.send_message(message.chat.id, "Processing...").await?;
+                bot.send_message(chat_id, "Processing...").await?;
 
-                let chat_id = message.chat.id;
                 let bot_clone = bot.clone();
                 tokio::spawn(async move {
                     let result =

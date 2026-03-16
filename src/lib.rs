@@ -49,6 +49,7 @@ pub fn build_router(config: Arc<Config>) -> Router {
     Router::new()
         .route("/health", get(routes::health))
         .route("/ingest", post(routes::ingest))
+        .route("/ingest/file", post(routes::ingest_multipart))
         .route("/note", post(routes::note))
         .layer(cors)
         .with_state(config)

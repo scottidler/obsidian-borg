@@ -1,9 +1,10 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Multipart, State};
 use std::sync::Arc;
 
 use serde::Deserialize;
 
+use crate::assets;
 use crate::config::Config;
 use crate::health::HealthResponse;
 use crate::pipeline;
@@ -57,6 +58,108 @@ pub async fn note(State(config): State<Arc<Config>>, Json(request): Json<NoteReq
         }
         IngestStatus::Completed => {
             log::info!("Note captured: {:?}", result.title);
+        }
+        _ => {}
+    }
+
+    Json(result)
+}
+
+pub async fn ingest_multipart(State(config): State<Arc<Config>>, mut multipart: Multipart) -> Json<IngestResult> {
+    let mut file_data: Option<(Vec<u8>, String)> = None;
+    let mut tags: Vec<String> = vec![];
+    let mut force = false;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "file" => {
+                let filename = field.file_name().unwrap_or("upload").to_string();
+                match field.bytes().await {
+                    Ok(bytes) => {
+                        file_data = Some((bytes.to_vec(), filename));
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to read file field: {e}");
+                        return Json(IngestResult {
+                            status: IngestStatus::Failed {
+                                reason: format!("Failed to read uploaded file: {e}"),
+                            },
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            "tags" => {
+                if let Ok(text) = field.text().await {
+                    tags = text
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+            }
+            "force" => {
+                if let Ok(text) = field.text().await {
+                    force = text.trim() == "true";
+                }
+            }
+            _ => {
+                log::debug!("Ignoring unknown multipart field: {name}");
+            }
+        }
+    }
+
+    let Some((data, filename)) = file_data else {
+        return Json(IngestResult {
+            status: IngestStatus::Failed {
+                reason: "No 'file' field in multipart upload".to_string(),
+            },
+            ..Default::default()
+        });
+    };
+
+    log::info!("Received multipart file upload: {filename} ({} bytes)", data.len());
+
+    let content = if assets::is_image_extension(&filename) {
+        ContentKind::Image { data, filename }
+    } else if assets::is_pdf_extension(&filename) {
+        ContentKind::Pdf { data, filename }
+    } else if assets::is_document_extension(&filename) {
+        ContentKind::Document { data, filename }
+    } else if assets::is_audio_extension(&filename) {
+        ContentKind::Audio { data, filename }
+    } else {
+        let all_extensions: Vec<&str> = assets::IMAGE_EXTENSIONS
+            .iter()
+            .chain(assets::PDF_EXTENSIONS.iter())
+            .chain(assets::DOCUMENT_EXTENSIONS.iter())
+            .chain(assets::AUDIO_EXTENSIONS.iter())
+            .copied()
+            .collect();
+        return Json(IngestResult {
+            status: IngestStatus::Failed {
+                reason: format!(
+                    "Unsupported file type: {}. Supported extensions: {}",
+                    filename,
+                    all_extensions.join(", ")
+                ),
+            },
+            ..Default::default()
+        });
+    };
+
+    let result = pipeline::process_content(content, tags, IngestMethod::Http, force, &config).await;
+
+    match &result.status {
+        IngestStatus::Failed { reason } => {
+            log::warn!(
+                "File ingest failed for {}: {reason}",
+                result.title.as_deref().unwrap_or("unknown")
+            );
+        }
+        IngestStatus::Completed => {
+            log::info!("File ingest completed: {:?}", result.title);
         }
         _ => {}
     }

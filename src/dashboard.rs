@@ -23,7 +23,7 @@ TABLE WITHOUT ID
   type as "Type",
   method as "Via",
   file.folder as "Folder"
-WHERE source != null AND date = date(today)
+WHERE (source != null OR asset != null OR method != null) AND date = date(today)
 SORT time DESC
 ```
 
@@ -35,7 +35,7 @@ TABLE WITHOUT ID
   type as "Type",
   method as "Via",
   file.folder as "Folder"
-WHERE source != null AND date = date(today) - dur(1 day)
+WHERE (source != null OR asset != null OR method != null) AND date = date(today) - dur(1 day)
 SORT time DESC
 ```
 
@@ -47,7 +47,7 @@ TABLE WITHOUT ID
   type as "Type",
   method as "Via",
   file.folder as "Folder"
-WHERE source != null AND date >= date(today) - dur(7 day) AND date < date(today) - dur(1 day)
+WHERE (source != null OR asset != null OR method != null) AND date >= date(today) - dur(7 day) AND date < date(today) - dur(1 day)
 SORT date DESC
 ```
 
@@ -59,7 +59,7 @@ TABLE WITHOUT ID
   type as "Type",
   method as "Via",
   file.folder as "Folder"
-WHERE source != null AND date >= date(today) - dur(30 day) AND date < date(today) - dur(7 day)
+WHERE (source != null OR asset != null OR method != null) AND date >= date(today) - dur(30 day) AND date < date(today) - dur(7 day)
 SORT date DESC
 ```
 
@@ -69,7 +69,7 @@ SORT date DESC
 TABLE WITHOUT ID
   length(rows) as "Count",
   rows.method as "Methods"
-WHERE source != null
+WHERE source != null OR asset != null OR method != null
 GROUP BY type
 ```
 "#;
