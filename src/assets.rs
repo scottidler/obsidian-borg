@@ -48,10 +48,30 @@ pub fn store_asset(
 /// Known image extensions.
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"];
 
+/// Known PDF extensions.
+pub const PDF_EXTENSIONS: &[&str] = &["pdf"];
+
+/// Known document extensions.
+pub const DOCUMENT_EXTENSIONS: &[&str] = &["docx", "pptx", "xlsx", "epub", "odt", "rtf"];
+
 /// Check if a filename has an image extension.
 pub fn is_image_extension(filename: &str) -> bool {
     let lower = filename.to_lowercase();
     IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
+}
+
+/// Check if a filename has a PDF extension.
+pub fn is_pdf_extension(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    PDF_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{ext}")))
+}
+
+/// Check if a filename has a document extension.
+pub fn is_document_extension(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    DOCUMENT_EXTENSIONS
+        .iter()
+        .any(|ext| lower.ends_with(&format!(".{ext}")))
 }
 
 #[cfg(test)]
@@ -137,5 +157,29 @@ mod tests {
         assert!(!is_image_extension("doc.pdf"));
         assert!(!is_image_extension("music.mp3"));
         assert!(!is_image_extension("noext"));
+    }
+
+    #[test]
+    fn test_is_pdf_extension() {
+        assert!(is_pdf_extension("report.pdf"));
+        assert!(is_pdf_extension("DOCUMENT.PDF"));
+        assert!(is_pdf_extension("my-file.Pdf"));
+        assert!(!is_pdf_extension("image.png"));
+        assert!(!is_pdf_extension("doc.docx"));
+        assert!(!is_pdf_extension("noext"));
+    }
+
+    #[test]
+    fn test_is_document_extension() {
+        assert!(is_document_extension("report.docx"));
+        assert!(is_document_extension("slides.pptx"));
+        assert!(is_document_extension("data.xlsx"));
+        assert!(is_document_extension("book.epub"));
+        assert!(is_document_extension("text.odt"));
+        assert!(is_document_extension("legacy.rtf"));
+        assert!(is_document_extension("REPORT.DOCX"));
+        assert!(!is_document_extension("report.pdf"));
+        assert!(!is_document_extension("image.png"));
+        assert!(!is_document_extension("noext"));
     }
 }

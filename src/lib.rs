@@ -9,6 +9,7 @@ pub mod config;
 pub mod dashboard;
 pub mod discord;
 pub mod error;
+pub mod extraction;
 pub mod fabric;
 pub mod health;
 pub mod hygiene;
@@ -239,11 +240,21 @@ pub async fn run_file_ingest(
 
     let content = if assets::is_image_extension(&filename) {
         types::ContentKind::Image { data, filename }
+    } else if assets::is_pdf_extension(&filename) {
+        types::ContentKind::Pdf { data, filename }
+    } else if assets::is_document_extension(&filename) {
+        types::ContentKind::Document { data, filename }
     } else {
+        let all_extensions: Vec<&str> = assets::IMAGE_EXTENSIONS
+            .iter()
+            .chain(assets::PDF_EXTENSIONS.iter())
+            .chain(assets::DOCUMENT_EXTENSIONS.iter())
+            .copied()
+            .collect();
         eyre::bail!(
-            "Unsupported file type: {}. Supported image extensions: {}",
+            "Unsupported file type: {}. Supported extensions: {}",
             filename,
-            assets::IMAGE_EXTENSIONS.join(", ")
+            all_extensions.join(", ")
         );
     };
 

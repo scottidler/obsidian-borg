@@ -1,5 +1,6 @@
 use crate::assets;
 use crate::config::Config;
+use crate::extraction;
 use crate::fabric;
 use crate::hygiene;
 use crate::jina;
@@ -103,13 +104,9 @@ pub async fn process_content(
     match content {
         ContentKind::Url(url) => process_url(&url, tags, method, force, config).await,
         ContentKind::Image { data, filename } => process_image(&data, &filename, tags, method, force, config).await,
-        ContentKind::Pdf { .. } => IngestResult {
-            status: IngestStatus::Failed {
-                reason: "PDF ingestion not yet implemented".to_string(),
-            },
-            method: Some(method),
-            ..Default::default()
-        },
+        ContentKind::Pdf { data, filename } => {
+            process_document_file(&data, &filename, tags, method, force, config, DocumentKind::Pdf).await
+        }
         ContentKind::Audio { .. } => IngestResult {
             status: IngestStatus::Failed {
                 reason: "Audio ingestion not yet implemented".to_string(),
@@ -118,13 +115,9 @@ pub async fn process_content(
             ..Default::default()
         },
         ContentKind::Text(text) => process_text(&text, tags, method, force, config).await,
-        ContentKind::Document { .. } => IngestResult {
-            status: IngestStatus::Failed {
-                reason: "Document ingestion not yet implemented".to_string(),
-            },
-            method: Some(method),
-            ..Default::default()
-        },
+        ContentKind::Document { data, filename } => {
+            process_document_file(&data, &filename, tags, method, force, config, DocumentKind::Document).await
+        }
     }
 }
 
@@ -715,6 +708,282 @@ fn title_from_filename(filename: &str) -> String {
     } else {
         cleaned.trim().to_string()
     }
+}
+
+/// Whether a file-based document is a PDF or a generic document (docx, pptx, etc.).
+#[derive(Debug, Clone, Copy)]
+enum DocumentKind {
+    Pdf,
+    Document,
+}
+
+impl DocumentKind {
+    fn subdirectory(self) -> &'static str {
+        match self {
+            DocumentKind::Pdf => "pdfs",
+            DocumentKind::Document => "docs",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            DocumentKind::Pdf => "pdf",
+            DocumentKind::Document => "document",
+        }
+    }
+
+    fn default_tag(self) -> &'static str {
+        match self {
+            DocumentKind::Pdf => "pdf",
+            DocumentKind::Document => "document",
+        }
+    }
+
+    fn content_type(self, asset_path: String) -> ContentType {
+        match self {
+            DocumentKind::Pdf => ContentType::Pdf { asset_path },
+            DocumentKind::Document => ContentType::Document { asset_path },
+        }
+    }
+}
+
+async fn process_document_file(
+    data: &[u8],
+    filename: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    _force: bool,
+    config: &Config,
+    kind: DocumentKind,
+) -> IngestResult {
+    let start = Instant::now();
+    match process_document_file_inner(data, filename, tags, method, config, kind).await {
+        Ok(mut result) => {
+            let elapsed = start.elapsed();
+            log::info!("{} pipeline completed in {elapsed:.2?}", kind.label().to_uppercase());
+            result.elapsed_secs = Some(elapsed.as_secs_f64());
+            result
+        }
+        Err(e) => {
+            let elapsed = start.elapsed();
+            log::error!(
+                "{} pipeline failed in {elapsed:.2?}: {e:?}",
+                kind.label().to_uppercase()
+            );
+            IngestResult {
+                status: IngestStatus::Failed {
+                    reason: format!("{:#}", e),
+                },
+                method: Some(method),
+                elapsed_secs: Some(elapsed.as_secs_f64()),
+                ..Default::default()
+            }
+        }
+    }
+}
+
+async fn process_document_file_inner(
+    data: &[u8],
+    filename: &str,
+    tags: Vec<String>,
+    method: IngestMethod,
+    config: &Config,
+    kind: DocumentKind,
+) -> Result<IngestResult> {
+    let tz: chrono_tz::Tz = config
+        .frontmatter
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::America::Los_Angeles);
+    let now = chrono::Utc::now().with_timezone(&tz);
+    let log_date = now.format("%Y-%m-%d").to_string();
+    let log_time = now.format("%H:%M").to_string();
+
+    // Store asset in vault
+    let vault_root = expand_tilde(&config.vault.root_path);
+    let (_abs_path, rel_path) = assets::store_asset(&vault_root, data, filename, kind.subdirectory())
+        .context(format!("Failed to store {} asset", kind.label()))?;
+
+    log::info!("Stored {} asset: {rel_path}", kind.label());
+
+    // Write to temp file for text extraction
+    let temp_dir = std::env::temp_dir().join("obsidian-borg");
+    std::fs::create_dir_all(&temp_dir).context("Failed to create temp directory")?;
+    let temp_path = temp_dir.join(filename);
+    std::fs::write(&temp_path, data).context("Failed to write temp file")?;
+
+    // Extract text via markitdown-cli
+    let extracted_text = extraction::extract_markdown(&temp_path).unwrap_or_else(|e| {
+        log::warn!("Text extraction failed for {filename}: {e:#}");
+        String::new()
+    });
+
+    if !extracted_text.is_empty() {
+        log::debug!("Extracted {} chars from {}", extracted_text.len(), filename);
+    }
+
+    // Generate title
+    let use_fabric = fabric::is_available(&config.fabric);
+    let title = if !extracted_text.is_empty() {
+        // Use extract_article_title logic - look for a good title from the extracted text
+        let title_candidate = extracted_text
+            .lines()
+            .find(|l| {
+                let trimmed = l.trim();
+                !trimmed.is_empty() && trimmed.len() > 3 && !trimmed.starts_with("Title:")
+            })
+            .map(|l| l.trim().to_string());
+
+        // Check for a Title: line first
+        let md_title = extracted_text
+            .lines()
+            .find(|line| line.starts_with("Title:"))
+            .map(|line| line.trim_start_matches("Title:").trim().to_string())
+            .filter(|t| !t.is_empty());
+
+        // Check for a # heading
+        let heading_title = extracted_text
+            .lines()
+            .find(|line| line.starts_with("# "))
+            .map(|line| line.trim_start_matches("# ").trim().to_string())
+            .filter(|t| !t.is_empty());
+
+        md_title
+            .or(heading_title)
+            .or(title_candidate)
+            .unwrap_or_else(|| title_from_filename(filename))
+    } else {
+        title_from_filename(filename)
+    };
+
+    let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
+    all_tags.push(kind.default_tag().to_string());
+
+    // Summarize via fabric
+    let summary = if use_fabric && !extracted_text.is_empty() {
+        match fabric::summarize(&extracted_text, false, &config.fabric).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("Fabric summarize failed: {e:#}");
+                if extracted_text.len() > 500 {
+                    extracted_text[..500].to_string()
+                } else {
+                    extracted_text.clone()
+                }
+            }
+        }
+    } else if !extracted_text.is_empty() {
+        // No fabric - use a truncated extract
+        if extracted_text.len() > 1000 {
+            format!("{}...", &extracted_text[..1000])
+        } else {
+            extracted_text.clone()
+        }
+    } else {
+        String::new()
+    };
+
+    // Generate tags via Fabric
+    let tag_source = if !extracted_text.is_empty() {
+        extracted_text.clone()
+    } else {
+        format!("{} file: {filename}", kind.label())
+    };
+
+    if use_fabric && let Ok(fabric_tags) = fabric::generate_tags(&tag_source, &config.fabric).await {
+        all_tags.extend(fabric_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+    }
+    all_tags.sort();
+    all_tags.dedup();
+
+    // Classify topic for routing
+    let summary_for_classify = if !extracted_text.is_empty() {
+        extracted_text.clone()
+    } else {
+        format!("{}: {}", kind.label(), title)
+    };
+
+    let folder = if use_fabric {
+        match fabric::classify_topic(&title, &summary_for_classify, &config.fabric).await {
+            Ok(result) if result.confidence >= config.routing.confidence_threshold => {
+                log::info!(
+                    "{} routing: LLM classified -> {} (confidence: {:.2})",
+                    kind.label(),
+                    result.folder,
+                    result.confidence
+                );
+                all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
+                all_tags.sort();
+                all_tags.dedup();
+                result.folder
+            }
+            _ => config.routing.fallback_folder.clone(),
+        }
+    } else {
+        config.routing.fallback_folder.clone()
+    };
+
+    let note = NoteContent {
+        title: title.clone(),
+        source_url: None,
+        asset_path: Some(rel_path.clone()),
+        tags: all_tags.clone(),
+        summary,
+        content_type: kind.content_type(rel_path),
+        embed_code: None,
+        method: Some(method),
+    };
+
+    let rendered = markdown::render_note(&note, &config.frontmatter);
+    let note_filename = format!("{}.md", hygiene::sanitize_filename(&title));
+
+    let dest_path = resolve_destination(
+        &config.vault.root_path,
+        &config.vault.inbox_path,
+        &folder,
+        &config.routing,
+    );
+    std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
+
+    let note_path = dest_path.join(&note_filename);
+    std::fs::write(&note_path, &rendered).context(format!("Failed to write {} note to vault", kind.label()))?;
+
+    log::info!(
+        "Wrote {} note: {} (folder: {})",
+        kind.label(),
+        note_path.display(),
+        folder
+    );
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_path);
+
+    // Log to ledger
+    let ledger_file = ledger::ledger_path(config);
+    let source_display = format!("[{}: {filename}]", kind.label());
+    ledger::append_entry(
+        &ledger_file,
+        &LedgerEntry {
+            date: log_date,
+            time: log_time,
+            method,
+            status: LedgerStatus::Completed,
+            title: Some(title.clone()),
+            source: source_display,
+            folder: Some(folder.clone()),
+        },
+    )?;
+
+    Ok(IngestResult {
+        status: IngestStatus::Completed,
+        note_path: Some(note_path.to_string_lossy().to_string()),
+        title: Some(title),
+        tags: all_tags,
+        elapsed_secs: None,
+        folder: Some(folder),
+        method: Some(method),
+        canonical_url: None,
+    })
 }
 
 /// Detect structured text patterns before LLM classification.
@@ -1331,42 +1600,14 @@ mod tests {
         let config = crate::config::Config::default();
 
         // Image is now implemented (Phase 3), tested separately
+        // PDF is now implemented (Phase 4), tested separately
+        // Document is now implemented (Phase 4), tested separately
 
-        // PDF
-        let result = super::process_content(
-            ContentKind::Pdf {
-                data: vec![1, 2, 3],
-                filename: "test.pdf".to_string(),
-            },
-            vec![],
-            IngestMethod::Cli,
-            false,
-            &config,
-        )
-        .await;
-        assert!(matches!(result.status, IngestStatus::Failed { .. }));
-
-        // Audio
+        // Audio (still not implemented)
         let result = super::process_content(
             ContentKind::Audio {
                 data: vec![1, 2, 3],
                 filename: "test.mp3".to_string(),
-            },
-            vec![],
-            IngestMethod::Cli,
-            false,
-            &config,
-        )
-        .await;
-        assert!(matches!(result.status, IngestStatus::Failed { .. }));
-
-        // Text is now implemented (Phase 2), tested separately
-
-        // Document
-        let result = super::process_content(
-            ContentKind::Document {
-                data: vec![1, 2, 3],
-                filename: "test.docx".to_string(),
             },
             vec![],
             IngestMethod::Cli,
