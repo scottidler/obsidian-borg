@@ -1,7 +1,6 @@
 #![deny(clippy::unwrap_used)]
 #![deny(dead_code)]
 #![deny(unused_variables)]
-#![allow(clippy::too_many_arguments)]
 
 pub mod assets;
 pub mod backoff;
