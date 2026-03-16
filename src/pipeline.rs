@@ -563,36 +563,79 @@ async fn process_image_inner(
     let temp_path = temp_dir.join(filename);
     std::fs::write(&temp_path, data).context("Failed to write temp image file")?;
 
-    // OCR text extraction (best-effort)
-    let ocr_text = ocr::ocr_extract(&temp_path).unwrap_or_else(|e| {
-        log::warn!("OCR extraction failed: {e:#}");
-        String::new()
+    // Run tesseract (local) and vision API (remote) in parallel
+    let ocr_temp_path = temp_path.clone();
+    let ocr_handle = tokio::task::spawn_blocking(move || {
+        ocr::ocr_extract(&ocr_temp_path).unwrap_or_else(|e| {
+            log::warn!("OCR extraction failed: {e:#}");
+            String::new()
+        })
     });
+
+    let vision_future = async {
+        if config.vision.enabled {
+            let mime = ocr::mime_from_extension(filename);
+            match ocr::vision_extract(data, &mime, &config.vision, &config.llm).await {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::warn!("Vision API failed: {e:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
+    let (ocr_result, vision) = tokio::join!(ocr_handle, vision_future);
+    let ocr_text = ocr_result.unwrap_or_default();
 
     if !ocr_text.is_empty() {
         log::debug!("OCR extracted {} chars", ocr_text.len());
     }
+    if let Some(ref v) = vision {
+        log::info!(
+            "Vision extracted {} chars text, title={:?}",
+            v.extracted_text.len(),
+            v.suggested_title
+        );
+    }
 
-    // Generate title
+    // Merge results: vision preferred over tesseract for title
     let use_fabric = fabric::is_available(&config.fabric);
-    let title = if !ocr_text.is_empty() && ocr_text.len() > 5 {
-        // Use first meaningful line from OCR as title candidate
-        let first_line = ocr_text.lines().find(|l| l.trim().len() > 3).unwrap_or("").trim();
-        if !first_line.is_empty() && first_line.len() <= 80 {
-            first_line.to_string()
-        } else {
-            title_from_filename(filename)
-        }
-    } else {
-        title_from_filename(filename)
-    };
+    let title = vision
+        .as_ref()
+        .and_then(|v| (!v.suggested_title.is_empty()).then_some(v.suggested_title.clone()))
+        .unwrap_or_else(|| {
+            if !ocr_text.is_empty() && ocr_text.len() > 5 {
+                let first_line = ocr_text.lines().find(|l| l.trim().len() > 3).unwrap_or("").trim();
+                if !first_line.is_empty() && first_line.len() <= 80 {
+                    first_line.to_string()
+                } else {
+                    title_from_filename(filename)
+                }
+            } else {
+                title_from_filename(filename)
+            }
+        });
+
+    // Merge extracted text: vision preferred over tesseract
+    let extracted_text = vision
+        .as_ref()
+        .and_then(|v| (!v.extracted_text.is_empty()).then_some(v.extracted_text.clone()))
+        .unwrap_or_else(|| ocr_text.clone());
 
     let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
     all_tags.push("image".to_string());
 
-    // Generate tags via Fabric from OCR text or filename
-    let tag_source = if !ocr_text.is_empty() {
-        ocr_text.clone()
+    // Include vision tags
+    if let Some(ref v) = vision {
+        all_tags.extend(v.suggested_tags.iter().map(|t| hygiene::sanitize_tag(t)));
+    }
+
+    // Generate tags via Fabric from extracted text or filename
+    let tag_source = if !extracted_text.is_empty() {
+        extracted_text.clone()
     } else {
         format!("Image file: {filename}")
     };
@@ -604,8 +647,8 @@ async fn process_image_inner(
     all_tags.dedup();
 
     // Classify topic for routing
-    let summary_text = if !ocr_text.is_empty() {
-        ocr_text.clone()
+    let summary_text = if !extracted_text.is_empty() {
+        extracted_text.clone()
     } else {
         format!("Image: {}", title)
     };
@@ -629,11 +672,19 @@ async fn process_image_inner(
         config.routing.fallback_folder.clone()
     };
 
-    // Build summary
-    let summary = if !ocr_text.is_empty() {
-        format!("## OCR Text\n\n{ocr_text}")
-    } else {
-        String::new()
+    // Build summary: include vision description and extracted text
+    let summary = {
+        let mut parts = Vec::new();
+        if let Some(ref v) = vision
+            && !v.description.is_empty()
+        {
+            parts.push(format!("## Description\n\n{}", v.description));
+        }
+        if !extracted_text.is_empty() {
+            let label = if vision.is_some() { "Extracted Text" } else { "OCR Text" };
+            parts.push(format!("## {label}\n\n{extracted_text}"));
+        }
+        parts.join("\n\n")
     };
 
     let note = NoteContent {
@@ -2413,5 +2464,75 @@ int main() {
         assert!(rendered.contains("language: \"rust\""));
         assert!(rendered.contains("```rust"));
         assert!(rendered.contains("  - code-snippet"));
+    }
+
+    #[test]
+    fn test_vision_title_preferred_over_filename() {
+        // Simulates the merge logic: vision title takes priority
+        let vision_title = "Netgate SG-2100 Serial Label";
+        let filename = "IMG_20260316_123456.jpg";
+
+        let vision = Some(ocr::VisionResult {
+            description: "A product label".to_string(),
+            suggested_title: vision_title.to_string(),
+            suggested_tags: vec!["hardware".to_string()],
+            extracted_text: "Serial: ABC-123".to_string(),
+        });
+
+        let title = vision
+            .as_ref()
+            .and_then(|v| (!v.suggested_title.is_empty()).then_some(v.suggested_title.clone()))
+            .unwrap_or_else(|| title_from_filename(filename));
+
+        assert_eq!(title, vision_title);
+    }
+
+    #[test]
+    fn test_vision_none_falls_back_to_filename() {
+        let filename = "screenshot-example.png";
+        let vision: Option<ocr::VisionResult> = None;
+
+        let title = vision
+            .as_ref()
+            .and_then(|v| (!v.suggested_title.is_empty()).then_some(v.suggested_title.clone()))
+            .unwrap_or_else(|| title_from_filename(filename));
+
+        assert_eq!(title, "screenshot example");
+    }
+
+    #[test]
+    fn test_vision_extracted_text_preferred_over_ocr() {
+        let ocr_text = "115 a> Inpul: 12V".to_string();
+        let vision = Some(ocr::VisionResult {
+            description: String::new(),
+            suggested_title: String::new(),
+            suggested_tags: vec![],
+            extracted_text: "Serial: ABC-123\nModel: SG-2100".to_string(),
+        });
+
+        let extracted = vision
+            .as_ref()
+            .and_then(|v| (!v.extracted_text.is_empty()).then_some(v.extracted_text.clone()))
+            .unwrap_or_else(|| ocr_text.clone());
+
+        assert_eq!(extracted, "Serial: ABC-123\nModel: SG-2100");
+    }
+
+    #[test]
+    fn test_vision_empty_text_falls_back_to_ocr() {
+        let ocr_text = "Some OCR text".to_string();
+        let vision = Some(ocr::VisionResult {
+            description: "A photo".to_string(),
+            suggested_title: "My Photo".to_string(),
+            suggested_tags: vec![],
+            extracted_text: String::new(),
+        });
+
+        let extracted = vision
+            .as_ref()
+            .and_then(|v| (!v.extracted_text.is_empty()).then_some(v.extracted_text.clone()))
+            .unwrap_or_else(|| ocr_text.clone());
+
+        assert_eq!(extracted, "Some OCR text");
     }
 }
