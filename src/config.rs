@@ -405,6 +405,7 @@ pub struct ServerConfig {
 pub struct VaultConfig {
     pub root_path: String,
     pub inbox_path: String,
+    pub vault_name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -463,6 +464,7 @@ impl Default for VaultConfig {
         Self {
             root_path: "~/obsidian-vault".to_string(),
             inbox_path: "~/obsidian-vault/Inbox".to_string(),
+            vault_name: "obsidian".to_string(),
         }
     }
 }

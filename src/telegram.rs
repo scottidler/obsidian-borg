@@ -4,7 +4,7 @@ use crate::config::{Config, TelegramConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
 use crate::trace;
-use crate::types::{ContentKind, IngestMethod};
+use crate::types::{ContentKind, IngestMethod, IngestResult};
 use eyre::Result;
 use std::sync::Arc;
 use teloxide::net::Download;
@@ -87,6 +87,22 @@ async fn claim_polling_session(bot: &Bot) {
         Err(e) => {
             log::warn!("telegram: failed to claim polling session: {e}");
         }
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Format an IngestResult as an HTML Telegram message with an optional
+/// clickable "Open in Obsidian" deep link.
+fn format_telegram_reply(result: &IngestResult, display_source: &str) -> String {
+    let base = format_reply(result, display_source);
+    let escaped = html_escape(&base);
+
+    match &result.obsidian_url {
+        Some(url) => format!("{escaped}\n<a href=\"{url}\">Open in Obsidian</a>"),
+        None => escaped,
     }
 }
 
@@ -174,8 +190,12 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                         )
                         .await;
                         log::debug!("Pipeline result: {:?}", result.status);
-                        let reply = format_reply(&result, &display_source);
-                        if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                        let reply = format_telegram_reply(&result, &display_source);
+                        if let Err(e) = bot_clone
+                            .send_message(chat_id, reply)
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                            .await
+                        {
                             log::error!("Failed to send Telegram reply: {e}");
                         }
                     });
@@ -222,8 +242,12 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                         )
                         .await;
                         log::debug!("Pipeline result: {:?}", result.status);
-                        let reply = format_reply(&result, &display_source);
-                        if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                        let reply = format_telegram_reply(&result, &display_source);
+                        if let Err(e) = bot_clone
+                            .send_message(chat_id, reply)
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                            .await
+                        {
                             log::error!("Failed to send Telegram reply: {e}");
                         }
                     });
@@ -273,8 +297,12 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                         )
                         .await;
                         log::debug!("Pipeline result: {:?}", result.status);
-                        let reply = format_reply(&result, &display_source);
-                        if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                        let reply = format_telegram_reply(&result, &display_source);
+                        if let Err(e) = bot_clone
+                            .send_message(chat_id, reply)
+                            .parse_mode(teloxide::types::ParseMode::Html)
+                            .await
+                        {
                             log::error!("Failed to send Telegram reply: {e}");
                         }
                     });
@@ -335,8 +363,12 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                                 )
                                 .await;
                                 log::debug!("Pipeline result: {:?}", result.status);
-                                let reply = format_reply(&result, &display_source);
-                                if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                                let reply = format_telegram_reply(&result, &display_source);
+                                if let Err(e) = bot_clone
+                                    .send_message(chat_id, reply)
+                                    .parse_mode(teloxide::types::ParseMode::Html)
+                                    .await
+                                {
                                     log::error!("Failed to send Telegram reply: {e}");
                                 }
                             });
@@ -393,8 +425,12 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     )
                     .await;
                     log::debug!("Pipeline result: {:?}", result.status);
-                    let reply = format_reply(&result, &display_source);
-                    if let Err(e) = bot_clone.send_message(chat_id, reply).await {
+                    let reply = format_telegram_reply(&result, &display_source);
+                    if let Err(e) = bot_clone
+                        .send_message(chat_id, reply)
+                        .parse_mode(teloxide::types::ParseMode::Html)
+                        .await
+                    {
                         log::error!("Failed to send Telegram reply: {e}");
                     }
                 });
@@ -422,5 +458,74 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
         }
 
         backoff.wait().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{IngestResult, IngestStatus};
+
+    #[test]
+    fn test_html_escape_special_chars() {
+        assert_eq!(
+            html_escape("<script>alert('xss')</script>"),
+            "&lt;script&gt;alert('xss')&lt;/script&gt;"
+        );
+        assert_eq!(html_escape("AT&T"), "AT&amp;T");
+        assert_eq!(html_escape("no special chars"), "no special chars");
+    }
+
+    #[test]
+    fn test_html_escape_mixed() {
+        assert_eq!(html_escape("a < b & c > d"), "a &lt; b &amp; c &gt; d");
+    }
+
+    #[test]
+    fn test_format_telegram_reply_with_obsidian_url() {
+        let result = IngestResult {
+            status: IngestStatus::Completed,
+            title: Some("Test Article".to_string()),
+            tags: vec!["ai".to_string()],
+            elapsed_secs: Some(3.5),
+            folder: Some("Inbox".to_string()),
+            obsidian_url: Some("obsidian://open?vault=obsidian&file=Inbox%2Ftest-article.md".to_string()),
+            ..Default::default()
+        };
+        let reply = format_telegram_reply(&result, "https://example.com");
+        assert!(reply.contains("Saved: Test Article"));
+        assert!(
+            reply.contains(
+                "<a href=\"obsidian://open?vault=obsidian&file=Inbox%2Ftest-article.md\">Open in Obsidian</a>"
+            )
+        );
+    }
+
+    #[test]
+    fn test_format_telegram_reply_without_obsidian_url() {
+        let result = IngestResult {
+            status: IngestStatus::Failed {
+                reason: "network error".to_string(),
+            },
+            ..Default::default()
+        };
+        let reply = format_telegram_reply(&result, "https://example.com");
+        assert!(reply.contains("Failed"));
+        assert!(!reply.contains("Open in Obsidian"));
+    }
+
+    #[test]
+    fn test_format_telegram_reply_escapes_html_in_title() {
+        let result = IngestResult {
+            status: IngestStatus::Completed,
+            title: Some("Title with <html> & stuff".to_string()),
+            tags: vec![],
+            obsidian_url: Some("obsidian://open?vault=obsidian&file=test.md".to_string()),
+            ..Default::default()
+        };
+        let reply = format_telegram_reply(&result, "https://example.com");
+        assert!(reply.contains("&lt;html&gt;"));
+        assert!(reply.contains("&amp;"));
+        assert!(reply.contains("<a href="));
     }
 }

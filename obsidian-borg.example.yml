@@ -4,6 +4,7 @@ server:
 
 vault:
   inbox_path: "~/obsidian-vault/Inbox"
+  vault_name: "obsidian"                            # Obsidian vault name for deep links
 
 transcriber:
   url: "http://100.x.x.x:8090"  # Tailscale IP of youtube-siphon machine

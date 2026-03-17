@@ -24,6 +24,7 @@ teloxide = { version = "0.17", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5.3"
 url = "2.5.8"
+urlencoding = "2.1"
 shellexpand = "3.1.2"
 tower-http = { version = "0.6.8", features = ["cors"] }
 

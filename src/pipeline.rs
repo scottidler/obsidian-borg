@@ -203,6 +203,7 @@ pub async fn process_url(
                 method: Some(method),
                 canonical_url: Some(canonical),
                 trace_id: None,
+                obsidian_url: None,
             }
         }
     }
@@ -430,6 +431,12 @@ async fn process_url_inner(
     // Release inflight guard now that ledger has the ✅ entry
     INFLIGHT.lock().await.remove(&canonical);
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -440,6 +447,7 @@ async fn process_url_inner(
         method: Some(method),
         canonical_url: Some(canonical),
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -781,6 +789,12 @@ async fn process_image_inner(
         },
     )?;
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -791,6 +805,7 @@ async fn process_image_inner(
         method: Some(method),
         canonical_url: None,
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -1030,6 +1045,12 @@ async fn process_audio_inner(
         },
     )?;
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -1040,6 +1061,7 @@ async fn process_audio_inner(
         method: Some(method),
         canonical_url: None,
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -1314,6 +1336,12 @@ async fn process_document_file_inner(
         },
     )?;
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -1324,6 +1352,7 @@ async fn process_document_file_inner(
         method: Some(method),
         canonical_url: None,
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -1529,6 +1558,12 @@ async fn process_text_inner(
         },
     )?;
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -1539,6 +1574,7 @@ async fn process_text_inner(
         method: Some(method),
         canonical_url: None,
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -1684,6 +1720,12 @@ async fn process_vocab(
         },
     )?;
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -1694,6 +1736,7 @@ async fn process_vocab(
         method: Some(method),
         canonical_url: None,
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -2090,6 +2133,12 @@ async fn process_code_snippet(
         },
     )?;
 
+    let obsidian_url = build_obsidian_url(
+        &config.vault.vault_name,
+        &note_path.to_string_lossy(),
+        &config.vault.root_path,
+    );
+
     Ok(IngestResult {
         status: IngestStatus::Completed,
         note_path: Some(note_path.to_string_lossy().to_string()),
@@ -2100,6 +2149,7 @@ async fn process_code_snippet(
         method: Some(method),
         canonical_url: None,
         trace_id: None,
+        obsidian_url,
     })
 }
 
@@ -2157,6 +2207,28 @@ fn resolve_destination(
     }
 
     dest
+}
+
+/// Build an obsidian://open deep link from vault name and note path.
+///
+/// `note_path` is the absolute filesystem path to the written note.
+/// `vault_root` is the unexpanded config value (e.g., "~/repos/scottidler/obsidian/").
+/// Returns None if note_path doesn't start with the expanded vault_root.
+fn build_obsidian_url(vault_name: &str, note_path: &str, vault_root: &str) -> Option<String> {
+    let expanded_root = expand_tilde(vault_root);
+    let root_str = expanded_root.to_string_lossy();
+    let root_prefix = if root_str.ends_with('/') {
+        root_str.to_string()
+    } else {
+        format!("{root_str}/")
+    };
+
+    let rel_path = note_path.strip_prefix(&root_prefix)?;
+
+    let encoded_vault = urlencoding::encode(vault_name);
+    let encoded_file = urlencoding::encode(rel_path);
+
+    Some(format!("obsidian://open?vault={encoded_vault}&file={encoded_file}"))
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -2622,5 +2694,71 @@ int main() {
             .unwrap_or_else(|| ocr_text.clone());
 
         assert_eq!(extracted, "Some OCR text");
+    }
+
+    // --- build_obsidian_url tests ---
+
+    #[test]
+    fn test_build_obsidian_url_simple() {
+        let url = build_obsidian_url(
+            "obsidian",
+            "/home/user/obsidian/Inbox/my-note.md",
+            "/home/user/obsidian/",
+        );
+        assert_eq!(
+            url,
+            Some("obsidian://open?vault=obsidian&file=Inbox%2Fmy-note.md".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_obsidian_url_no_trailing_slash() {
+        let url = build_obsidian_url(
+            "obsidian",
+            "/home/user/obsidian/Inbox/my-note.md",
+            "/home/user/obsidian",
+        );
+        assert_eq!(
+            url,
+            Some("obsidian://open?vault=obsidian&file=Inbox%2Fmy-note.md".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_obsidian_url_emoji_folder() {
+        let url = build_obsidian_url(
+            "obsidian",
+            "/home/user/obsidian/\u{1f4e5} Inbox/claude-code-guide.md",
+            "/home/user/obsidian/",
+        );
+        let url = url.expect("should produce a URL for emoji folder path");
+        assert!(url.starts_with("obsidian://open?vault=obsidian&file="));
+        assert!(url.contains("Inbox"));
+        assert!(url.contains("claude-code-guide.md"));
+    }
+
+    #[test]
+    fn test_build_obsidian_url_nested_folder() {
+        let url = build_obsidian_url(
+            "obsidian",
+            "/home/user/obsidian/Tech/AI-LLM/my-note.md",
+            "/home/user/obsidian/",
+        );
+        assert_eq!(
+            url,
+            Some("obsidian://open?vault=obsidian&file=Tech%2FAI-LLM%2Fmy-note.md".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_obsidian_url_path_mismatch() {
+        let url = build_obsidian_url("obsidian", "/home/user/other-vault/note.md", "/home/user/obsidian/");
+        assert_eq!(url, None);
+    }
+
+    #[test]
+    fn test_build_obsidian_url_vault_name_with_spaces() {
+        let url = build_obsidian_url("My Notes", "/home/user/obsidian/note.md", "/home/user/obsidian/");
+        assert_eq!(url, Some("obsidian://open?vault=My%20Notes&file=note.md".to_string()));
     }
 }
