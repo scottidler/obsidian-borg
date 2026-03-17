@@ -64,20 +64,19 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
                         }
                     }
                     "reclassify" => {
-                        if let Some(type_str) = val.as_str()
-                            && type_str == "link"
-                        {
-                            let new_type = if let Some(source) = fm.get("source").and_then(|v| v.as_str()) {
-                                if source.contains("youtube.com") || source.contains("youtu.be") {
-                                    "youtube"
+                        if let Some(type_str) = val.as_str() {
+                            let needs_reclassify = type_str == "link" || type_str == "article";
+                            if needs_reclassify {
+                                let new_type = if let Some(source) = fm.get("source").and_then(|v| v.as_str()) {
+                                    reclassify_type(source)
                                 } else {
                                     "article"
+                                };
+                                if new_type != type_str {
+                                    fm.insert(field.clone(), serde_yaml::Value::String(new_type.to_string()));
+                                    changed = true;
                                 }
-                            } else {
-                                "article"
-                            };
-                            fm.insert(field.clone(), serde_yaml::Value::String(new_type.to_string()));
-                            changed = true;
+                            }
                         }
                     }
                     "normalize" => {
@@ -275,6 +274,34 @@ fn render_yaml_field(lines: &mut Vec<String>, key: &str, val: &serde_yaml::Value
     }
 }
 
+/// Classify a source URL into the correct content type string.
+/// Used by both migrate reclassify and audit.
+pub fn reclassify_type(source: &str) -> &'static str {
+    use std::sync::LazyLock;
+
+    static YOUTUBE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?:youtube\.com/watch|youtu\.be/|youtube\.com/shorts/)").expect("valid regex")
+    });
+    static GITHUB_REPO_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^https?://github\.com/[^/]+/[^/]+/?(\?[^ ]*)?$").expect("valid regex"));
+    static X_STATUS_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^https?://x\.com/[^/]+/status/\d+").expect("valid regex"));
+    static REDDIT_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^https?://(?:www\.)?reddit\.com/r/[^/]+/comments/").expect("valid regex"));
+
+    if YOUTUBE_RE.is_match(source) {
+        "youtube"
+    } else if GITHUB_REPO_RE.is_match(source) {
+        "github"
+    } else if X_STATUS_RE.is_match(source) {
+        "social"
+    } else if REDDIT_RE.is_match(source) {
+        "reddit"
+    } else {
+        "article"
+    }
+}
+
 fn extract_title_from_body(body: &str) -> Option<String> {
     for line in body.lines() {
         let trimmed = line.trim();
@@ -362,5 +389,52 @@ mod tests {
         );
         let result = render_frontmatter(&fm, "\n");
         assert!(result.contains("tags:\n  - ai\n  - rust"));
+    }
+
+    #[test]
+    fn test_reclassify_type_youtube() {
+        assert_eq!(reclassify_type("https://www.youtube.com/watch?v=abc123"), "youtube");
+        assert_eq!(reclassify_type("https://youtu.be/abc123"), "youtube");
+        assert_eq!(reclassify_type("https://www.youtube.com/shorts/abc123"), "youtube");
+    }
+
+    #[test]
+    fn test_reclassify_type_github() {
+        assert_eq!(reclassify_type("https://github.com/open-webui/open-terminal"), "github");
+        assert_eq!(reclassify_type("https://github.com/Infatoshi/OpenSquirrel/"), "github");
+    }
+
+    #[test]
+    fn test_reclassify_type_github_deep_path_is_article() {
+        assert_eq!(
+            reclassify_type("https://github.com/owner/repo/blob/main/README.md"),
+            "article"
+        );
+        assert_eq!(reclassify_type("https://github.com/owner/repo/issues/42"), "article");
+    }
+
+    #[test]
+    fn test_reclassify_type_social() {
+        assert_eq!(
+            reclassify_type("https://x.com/Zai_org/status/2033221428640674015"),
+            "social"
+        );
+    }
+
+    #[test]
+    fn test_reclassify_type_reddit() {
+        assert_eq!(
+            reclassify_type("https://www.reddit.com/r/footballstrategy/comments/lhb3ku/help/"),
+            "reddit"
+        );
+    }
+
+    #[test]
+    fn test_reclassify_type_article() {
+        assert_eq!(reclassify_type("https://blog.example.com/post"), "article");
+        assert_eq!(
+            reclassify_type("https://www.xda-developers.com/some-article/"),
+            "article"
+        );
     }
 }

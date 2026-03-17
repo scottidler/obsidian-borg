@@ -22,6 +22,9 @@ pub enum ContentType {
         duration_secs: f64,
     },
     Article,
+    GitHub,
+    Social,
+    Reddit,
     Image {
         asset_path: String,
     },
@@ -75,6 +78,9 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
     let type_field = match &note.content_type {
         ContentType::YouTube { .. } => "youtube",
         ContentType::Article => "article",
+        ContentType::GitHub => "github",
+        ContentType::Social => "social",
+        ContentType::Reddit => "reddit",
         ContentType::Image { .. } => "image",
         ContentType::Pdf { .. } => "pdf",
         ContentType::Audio { .. } => "audio",
@@ -344,6 +350,57 @@ mod tests {
         };
         let rendered = render_note(&note, &test_config());
         assert!(!rendered.contains("trace_id"));
+    }
+
+    #[test]
+    fn test_render_github_note() {
+        let note = NoteContent {
+            title: "open-webui/open-terminal".to_string(),
+            source_url: Some("https://github.com/open-webui/open-terminal".to_string()),
+            asset_path: None,
+            tags: vec!["github".to_string()],
+            summary: "A terminal you can curl.".to_string(),
+            content_type: ContentType::GitHub,
+            embed_code: None,
+            method: Some(IngestMethod::Telegram),
+            trace_id: None,
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(rendered.contains("type: github"));
+    }
+
+    #[test]
+    fn test_render_social_note() {
+        let note = NoteContent {
+            title: "Z.ai announcement".to_string(),
+            source_url: Some("https://x.com/Zai_org/status/123".to_string()),
+            asset_path: None,
+            tags: vec!["ai".to_string()],
+            summary: "A social post.".to_string(),
+            content_type: ContentType::Social,
+            embed_code: None,
+            method: Some(IngestMethod::Telegram),
+            trace_id: None,
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(rendered.contains("type: social"));
+    }
+
+    #[test]
+    fn test_render_reddit_note() {
+        let note = NoteContent {
+            title: "Understanding inside zone".to_string(),
+            source_url: Some("https://www.reddit.com/r/footballstrategy/comments/abc/test/".to_string()),
+            asset_path: None,
+            tags: vec!["football".to_string()],
+            summary: "A reddit discussion.".to_string(),
+            content_type: ContentType::Reddit,
+            embed_code: None,
+            method: Some(IngestMethod::Telegram),
+            trace_id: None,
+        };
+        let rendered = render_note(&note, &test_config());
+        assert!(rendered.contains("type: reddit"));
     }
 
     #[test]

@@ -247,6 +247,24 @@ fn default_links() -> Vec<LinkConfig> {
             folder: "".to_string(),
         },
         LinkConfig {
+            name: "github".to_string(),
+            regex: r"https?://github\.com/[^/]+/[^/]+/?(\?[^ ]*)?$".to_string(),
+            resolution: "FWVGA".to_string(),
+            folder: "".to_string(),
+        },
+        LinkConfig {
+            name: "social".to_string(),
+            regex: r"https?://x\.com/[^/]+/status/\d+".to_string(),
+            resolution: "FWVGA".to_string(),
+            folder: "".to_string(),
+        },
+        LinkConfig {
+            name: "reddit".to_string(),
+            regex: r"https?://(?:www\.)?reddit\.com/r/[^/]+/comments/".to_string(),
+            resolution: "FWVGA".to_string(),
+            folder: "".to_string(),
+        },
+        LinkConfig {
             name: "default".to_string(),
             regex: r".*".to_string(),
             resolution: "FWVGA".to_string(),

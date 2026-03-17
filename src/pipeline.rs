@@ -313,16 +313,27 @@ async fn process_url_inner(
         } else {
             process_youtube_legacy(&url_match.url, config).await?
         }
-    } else if use_fabric {
-        match process_article_fabric(&url_match.url, config).await {
-            Ok(result) => result,
-            Err(e) => {
-                log::warn!("Fabric article fetch failed: {e:#}, falling back to Jina");
-                process_article_jina(&url_match.url).await?
-            }
-        }
     } else {
-        process_article_jina(&url_match.url).await?
+        // Determine content type from link classification
+        let ct = match url_match.link_name.as_str() {
+            "github" => ContentType::GitHub,
+            "social" => ContentType::Social,
+            "reddit" => ContentType::Reddit,
+            _ => ContentType::Article,
+        };
+        if use_fabric {
+            match process_article_fabric(&url_match.url, config).await {
+                Ok((title, summary, _)) => (title, summary, ct),
+                Err(e) => {
+                    log::warn!("Fabric article fetch failed: {e:#}, falling back to Jina");
+                    let (title, summary, _) = process_article_jina(&url_match.url).await?;
+                    (title, summary, ct)
+                }
+            }
+        } else {
+            let (title, summary, _) = process_article_jina(&url_match.url).await?;
+            (title, summary, ct)
+        }
     };
 
     let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
