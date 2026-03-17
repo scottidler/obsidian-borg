@@ -3,37 +3,37 @@ server:
   port: 8080
 
 vault:
-  inbox_path: "~/obsidian-vault/Inbox"
-  vault_name: "obsidian"                            # Obsidian vault name for deep links
+  inbox-path: ~/obsidian-vault/Inbox
+  vault-name: obsidian                               # Obsidian vault name for deep links
 
 transcriber:
-  url: "http://100.x.x.x:8090"  # Tailscale IP of youtube-siphon machine
-  timeout_secs: 120
+  url: http://100.x.x.x:8090                        # Tailscale IP of youtube-siphon machine
+  timeout-secs: 120
 
 groq:
-  api_key: "GROQ_API_KEY"                 # env var name (or file path)
-  model: "whisper-large-v3"
+  api-key: GROQ_API_KEY                              # env var name (or file path)
+  model: whisper-large-v3
 
 llm:
-  provider: "claude"
-  model: "claude-sonnet-4-6"
-  api_key: "ANTHROPIC_API_KEY"               # env var name (or file path)
+  provider: claude
+  model: claude-sonnet-4-6
+  api-key: ANTHROPIC_API_KEY                         # env var name (or file path)
 
 # Optional: uncomment to enable Telegram bot ingestion
 # telegram:
-#   bot_token: "TELEGRAM_BOT_TOKEN"             # env var name (or file path)
-#   allowed_chat_ids: []                        # empty = allow all, or list specific chat IDs
+#   bot-token: TELEGRAM_BOT_TOKEN                    # env var name (or file path)
+#   allowed-chat-ids: []                             # empty = allow all, or list specific chat IDs
 
 # Optional: uncomment to enable Discord bot ingestion
 # discord:
-#   bot_token: "DISCORD_BOT_TOKEN"              # env var name (or file path)
-#   channel_id: 1234567890                      # only listen on this channel
+#   bot-token: DISCORD_BOT_TOKEN                     # env var name (or file path)
+#   channel-id: 1234567890                           # only listen on this channel
 
 # Optional: uncomment to enable ntfy.sh mobile ingestion
 # ntfy:
-#   topic: "obsidian-borg-CHANGE-ME"           # unique topic name (acts as shared secret)
-#   server: "https://ntfy.sh"                  # optional, default: https://ntfy.sh
-#   token: "NTFY_TOKEN"                         # optional, env var name (or file path)
+#   topic: obsidian-borg-CHANGE-ME                   # unique topic name (acts as shared secret)
+#   server: https://ntfy.sh                          # optional, default: https://ntfy.sh
+#   token: NTFY_TOKEN                                # optional, env var name (or file path)
 
 # ---------------------------------------------------------------------------
 # URL Canonicalization
@@ -41,7 +41,7 @@ llm:
 # Rules normalize domain aliases so the same resource always has one identity.
 # Built-in defaults handle YouTube and Twitter variants. Add custom rules here
 # to extend or override. Rules with the same `name` as a built-in replace it.
-# First match wins — order matters.
+# First match wins - order matters.
 #
 # Each rule has:
 #   name:       unique identifier (matches built-in name to override)
@@ -52,19 +52,19 @@ llm:
 #   rules:
 #     - name: old-reddit
 #       match: 'https?://old\.reddit\.com/(?P<path>.*)'
-#       canonical: "https://www.reddit.com/{path}"
+#       canonical: https://www.reddit.com/{path}
 #     - name: medium-shortlink
 #       match: 'https?://(?P<user>[a-z0-9-]+)\.medium\.com/(?P<path>.*)'
-#       canonical: "https://medium.com/@{user}/{path}"
+#       canonical: https://medium.com/@{user}/{path}
 #
 # Built-in defaults (active even with no config):
-#   youtube-shorts-mobile  m.youtube.com/shorts/ID  → www.youtube.com/shorts/ID
-#   youtube-shortlink      youtu.be/ID              → www.youtube.com/watch?v=ID
-#   youtube-mobile         m.youtube.com/watch?v=ID → www.youtube.com/watch?v=ID
-#   youtube-music          music.youtube.com/...    → www.youtube.com/watch?v=ID
-#   youtube-nocookie       youtube-nocookie.com/... → www.youtube.com/watch?v=ID
-#   twitter-to-x           twitter.com/...          → x.com/...
-#   mobile-twitter         mobile.twitter.com/...   → x.com/...
+#   youtube-shorts-mobile  m.youtube.com/shorts/ID  -> www.youtube.com/shorts/ID
+#   youtube-shortlink      youtu.be/ID              -> www.youtube.com/watch?v=ID
+#   youtube-mobile         m.youtube.com/watch?v=ID -> www.youtube.com/watch?v=ID
+#   youtube-music          music.youtube.com/...    -> www.youtube.com/watch?v=ID
+#   youtube-nocookie       youtube-nocookie.com/... -> www.youtube.com/watch?v=ID
+#   twitter-to-x           twitter.com/...          -> x.com/...
+#   mobile-twitter         mobile.twitter.com/...   -> x.com/...
 
 # ---------------------------------------------------------------------------
 # Migration
@@ -72,32 +72,32 @@ llm:
 # Config-driven spec for `obsidian-borg migrate`. This is the SINGLE SOURCE OF
 # TRUTH for frontmatter schema evolution. When the schema changes in the future:
 #
-#   1. Update field_renames below (add old_name: new_name mappings)
+#   1. Update field-renames below (add old_name: new_name mappings)
 #   2. Run:  obsidian-borg migrate --dry-run   (review proposed changes)
 #   3. Run:  obsidian-borg migrate --apply      (write changes to vault)
 #   4. Review: cd ~/repos/scottidler/obsidian && git diff
 #   5. Commit the vault changes
 #   6. Update render_note() in markdown.rs to emit the new field for NEW notes
 #
-# Example — if you later rename `source` to `origin`:
-#   field_renames:
-#     url: origin          # obsidian-bookmark era → new name
-#     source: origin       # obsidian-borg era → new name
+# Example - if you later rename `source` to `origin`:
+#   field-renames:
+#     url: origin          # obsidian-bookmark era -> new name
+#     source: origin       # obsidian-borg era -> new name
 #   Then re-run: obsidian-borg migrate --apply
 #
 migration:
-  field_renames:
+  field-renames:
     url: source              # obsidian-bookmark used `url:`, we now use `source:`
 
-  field_transforms:
+  field-transforms:
     source: canonicalize     # run URL through canonicalization rules
-    type: reclassify         # `link` → `youtube` or `article` based on URL
-    tags: normalize          # inline `#tag, #tag` → YAML list, strip #
+    type: reclassify         # `link` -> `youtube` or `article` based on URL
+    tags: normalize          # inline `#tag, #tag` -> YAML list, strip #
 
-  title_fallback: true       # derive title from H1 heading or filename if missing
-  seed_borg_log: true        # backfill Borg Ledger with existing notes' URLs
+  title-fallback: true       # derive title from H1 heading or filename if missing
+  seed-borg-log: true        # backfill Borg Ledger with existing notes' URLs
 
-  skip_folders:
+  skip-folders:
     - "⚙️ System"
     - "📆 Daily"
     - "templates"

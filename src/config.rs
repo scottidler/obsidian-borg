@@ -160,7 +160,7 @@ pub fn merge_canonicalization_rules(config_rules: &[CanonicalRule]) -> Vec<Canon
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct Config {
     pub server: ServerConfig,
     pub vault: VaultConfig,
@@ -185,7 +185,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct VisionConfig {
     pub enabled: bool,
     pub model: String,
@@ -201,7 +201,7 @@ impl Default for VisionConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct MigrationConfig {
     pub field_renames: std::collections::HashMap<String, String>,
     pub field_transforms: std::collections::HashMap<String, String>,
@@ -211,7 +211,7 @@ pub struct MigrationConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct TextCaptureConfig {
     pub vocab_folders: std::collections::HashMap<String, String>,
     pub code_folder: String,
@@ -270,7 +270,7 @@ fn default_resolution() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct FabricConfig {
     pub binary: String,
     pub model: String,
@@ -296,7 +296,7 @@ impl Default for FabricConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct FrontmatterConfig {
     #[serde(default)]
     pub default_tags: Vec<String>,
@@ -316,7 +316,7 @@ impl Default for FrontmatterConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct RoutingConfig {
     pub confidence_threshold: f64,
     pub fallback_folder: String,
@@ -343,10 +343,11 @@ pub struct TopicRoute {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct TelegramConfig {
-    #[serde(alias = "bot_token_env")]
+    #[serde(alias = "bot_token_env", alias = "bot_token")]
     pub bot_token: String,
-    #[serde(default)]
+    #[serde(default, alias = "allowed_chat_ids")]
     pub allowed_chat_ids: Vec<i64>,
     /// If set, only run the Telegram poller on the host with this hostname.
     #[serde(default)]
@@ -354,9 +355,11 @@ pub struct TelegramConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct DiscordConfig {
-    #[serde(alias = "bot_token_env")]
+    #[serde(alias = "bot_token_env", alias = "bot_token")]
     pub bot_token: String,
+    #[serde(alias = "channel_id")]
     pub channel_id: u64,
     /// If set, only run the Discord bot on the host with this hostname.
     #[serde(default)]
@@ -364,6 +367,7 @@ pub struct DiscordConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct NtfyConfig {
     pub topic: String,
     #[serde(default = "default_ntfy_server")]
@@ -394,14 +398,14 @@ pub fn is_local_host(host: &Option<String>) -> bool {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct VaultConfig {
     pub root_path: String,
     pub inbox_path: String,
@@ -409,31 +413,31 @@ pub struct VaultConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct TranscriberConfig {
     pub url: String,
     pub timeout_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct GroqConfig {
-    #[serde(alias = "api_key_env")]
+    #[serde(alias = "api_key_env", alias = "api_key")]
     pub api_key: String,
     pub model: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct LlmConfig {
     pub provider: String,
     pub model: String,
-    #[serde(alias = "api_key_env")]
+    #[serde(alias = "api_key_env", alias = "api_key")]
     pub api_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 pub struct HotkeyConfig {
     pub host: String,
     pub port: u16,
@@ -531,10 +535,10 @@ server:
   host: "127.0.0.1"
   port: 9090
 vault:
-  inbox_path: "/tmp/vault/Inbox"
+  inbox-path: "/tmp/vault/Inbox"
 transcriber:
   url: "http://192.168.1.100:8090"
-  timeout_secs: 60
+  timeout-secs: 60
 groq:
   model: "whisper-large-v3-turbo"
 llm:
@@ -598,8 +602,8 @@ ntfy:
     fn test_config_with_telegram_section() {
         let yaml = r#"
 telegram:
-  bot_token: "TELEGRAM_BOT_TOKEN"
-  allowed_chat_ids: [123456, 789012]
+  bot-token: TELEGRAM_BOT_TOKEN
+  allowed-chat-ids: [123456, 789012]
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         let tg = config.telegram.expect("telegram should be Some");
@@ -611,7 +615,7 @@ telegram:
     fn test_config_with_telegram_no_allowed_ids() {
         let yaml = r#"
 telegram:
-  bot_token: "TELEGRAM_BOT_TOKEN"
+  bot-token: TELEGRAM_BOT_TOKEN
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         let tg = config.telegram.expect("telegram should be Some");
@@ -622,8 +626,8 @@ telegram:
     fn test_config_with_discord_section() {
         let yaml = r#"
 discord:
-  bot_token: "DISCORD_BOT_TOKEN"
-  channel_id: 1234567890
+  bot-token: DISCORD_BOT_TOKEN
+  channel-id: 1234567890
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         let dc = config.discord.expect("discord should be Some");
@@ -635,10 +639,10 @@ discord:
     fn test_config_with_both_bots() {
         let yaml = r#"
 telegram:
-  bot_token: "TG_TOKEN"
+  bot-token: TG_TOKEN
 discord:
-  bot_token: "DC_TOKEN"
-  channel_id: 999
+  bot-token: DC_TOKEN
+  channel-id: 999
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         assert!(config.telegram.is_some());
