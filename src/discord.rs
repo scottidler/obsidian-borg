@@ -4,7 +4,7 @@ use crate::config::{Config, DiscordConfig};
 use crate::pipeline;
 use crate::router::{extract_url_from_text, format_reply};
 use crate::trace;
-use crate::types::{ContentKind, IngestMethod};
+use crate::types::{ContentKind, IngestMethod, IngestResult};
 use eyre::Result;
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -49,6 +49,15 @@ fn classify_attachment(data: Vec<u8>, filename: String, content_type: Option<&st
     }
 
     None
+}
+
+/// Format a Discord reply with an optional plain-text obsidian:// deep link.
+fn format_discord_reply(result: &IngestResult, display_source: &str) -> String {
+    let base = format_reply(result, display_source);
+    match &result.obsidian_url {
+        Some(url) => format!("{base}\n{url}"),
+        None => base,
+    }
 }
 
 struct Handler {
@@ -128,7 +137,7 @@ impl EventHandler for Handler {
                     .await;
                     let _ = msg
                         .channel_id
-                        .say(&ctx.http, format_reply(&result, &display_source))
+                        .say(&ctx.http, format_discord_reply(&result, &display_source))
                         .await;
                 }
                 None => {
@@ -186,7 +195,7 @@ impl EventHandler for Handler {
         .await;
         let _ = msg
             .channel_id
-            .say(&ctx.http, format_reply(&result, &display_source))
+            .say(&ctx.http, format_discord_reply(&result, &display_source))
             .await;
     }
 }
@@ -221,5 +230,39 @@ pub async fn run(token: String, dc_config: DiscordConfig, config: Arc<Config>) -
         }
 
         backoff.wait().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{IngestResult, IngestStatus};
+
+    #[test]
+    fn test_format_discord_reply_with_obsidian_url() {
+        let result = IngestResult {
+            status: IngestStatus::Completed,
+            title: Some("Test Article".to_string()),
+            tags: vec!["ai".to_string()],
+            elapsed_secs: Some(3.5),
+            obsidian_url: Some("obsidian://open?vault=obsidian&file=Inbox%2Ftest-article.md".to_string()),
+            ..Default::default()
+        };
+        let reply = format_discord_reply(&result, "https://example.com");
+        assert!(reply.contains("Saved: Test Article"));
+        assert!(reply.contains("obsidian://open?vault=obsidian&file=Inbox%2Ftest-article.md"));
+    }
+
+    #[test]
+    fn test_format_discord_reply_without_obsidian_url() {
+        let result = IngestResult {
+            status: IngestStatus::Failed {
+                reason: "network error".to_string(),
+            },
+            ..Default::default()
+        };
+        let reply = format_discord_reply(&result, "https://example.com");
+        assert!(reply.contains("Failed"));
+        assert!(!reply.contains("obsidian://"));
     }
 }
