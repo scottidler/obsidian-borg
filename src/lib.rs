@@ -21,6 +21,7 @@ pub mod migrate;
 pub mod ntfy;
 pub mod ocr;
 pub mod pipeline;
+pub mod quality;
 pub mod router;
 pub mod routes;
 pub mod telegram;

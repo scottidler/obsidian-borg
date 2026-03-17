@@ -336,6 +336,11 @@ async fn process_url_inner(
         }
     };
 
+    // Quality gate: detect blocked/garbage content before creating a note
+    if let Some(reason) = crate::quality::detect_blocked_content(&summary, &title) {
+        eyre::bail!("Content quality check failed: {reason}");
+    }
+
     let mut all_tags: Vec<String> = tags.iter().map(|t| hygiene::sanitize_tag(t)).collect();
 
     // Generate tags via Fabric (graceful failure)
