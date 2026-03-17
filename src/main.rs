@@ -52,5 +52,6 @@ async fn main() -> Result<()> {
         Some(Command::Hotkey(opts)) => obsidian_borg::run_hotkey(opts, &config).await,
         Some(Command::Sign) => obsidian_borg::run_sign(&config).await,
         Some(Command::Migrate { dry_run: _, apply }) => obsidian_borg::migrate::run_migrate(&config, apply).await,
+        Some(Command::Audit { fix }) => obsidian_borg::audit::run_audit(&config, fix).await,
     }
 }

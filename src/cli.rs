@@ -74,6 +74,12 @@ pub enum Command {
         #[arg(long)]
         apply: bool,
     },
+    /// Audit ledger and vault for misclassified or broken entries
+    Audit {
+        /// Fix misclassified types in vault notes
+        #[arg(long)]
+        fix: bool,
+    },
 }
 
 #[derive(Parser, Debug)]

@@ -139,6 +139,51 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
     Ok(())
 }
 
+/// Parsed row from the ledger for audit purposes.
+#[derive(Debug)]
+pub struct ParsedLedgerRow {
+    pub date: String,
+    pub status: String,
+    pub title: String,
+    pub source: String,
+}
+
+/// Parse all completed entries from the ledger for auditing.
+pub fn parse_completed_entries(ledger_path: &Path) -> Result<Vec<ParsedLedgerRow>> {
+    if !ledger_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(ledger_path).context("Failed to read Borg Ledger")?;
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        if !line.starts_with('|') || line.starts_with("| Date") || line.starts_with("|--") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('|').collect();
+        if cols.len() < 8 {
+            continue;
+        }
+        let status = cols[4].trim().to_string();
+        if status != "✅" {
+            continue;
+        }
+        let title_raw = cols[5].trim();
+        // Strip wiki-link brackets: [[Title]] -> Title
+        let title = title_raw
+            .strip_prefix("[[")
+            .and_then(|s| s.strip_suffix("]]"))
+            .unwrap_or(title_raw)
+            .to_string();
+        entries.push(ParsedLedgerRow {
+            date: cols[1].trim().to_string(),
+            status,
+            title,
+            source: cols[6].trim().to_string(),
+        });
+    }
+    Ok(entries)
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()

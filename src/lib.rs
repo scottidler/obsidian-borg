@@ -3,6 +3,7 @@
 #![deny(unused_variables)]
 
 pub mod assets;
+pub mod audit;
 pub mod backoff;
 pub mod cli;
 pub mod config;
