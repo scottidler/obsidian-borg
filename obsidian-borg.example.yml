@@ -23,6 +23,8 @@ llm:
 # telegram:
 #   bot-token: TELEGRAM_BOT_TOKEN                    # env var name (or file path)
 #   allowed-chat-ids: []                             # empty = allow all, or list specific chat IDs
+#   notification-chat-id: 123456789                  # where cross-method notifications go
+#                                                    # falls back to first allowed-chat-ids entry
 
 # Optional: uncomment to enable Discord bot ingestion
 # discord:

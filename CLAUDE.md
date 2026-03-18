@@ -13,7 +13,10 @@ Rust CLI daemon that ingests URLs (via Telegram, Discord, HTTP, clipboard hotkey
 ## Architecture
 
 ```
-CLI/Telegram/Discord/HTTP
+CLI/Telegram/Discord/HTTP/ntfy
+    |
+    v
+notify::Notifier.processing()     # "[trace-id] Processing..." via Telegram
     |
     v
 pipeline::process_url()
@@ -25,7 +28,14 @@ pipeline::process_url()
     +-- markdown::render_note()     # frontmatter + body
     +-- write to vault (notes/)     # all ingested notes go to notes/
     +-- ledger::append_entry()      # log the ingest
+    |
+    v
+notify::Notifier.result()          # "Saved: Title (2.5s) Tags: ..." via Telegram
 ```
+
+### Notification Service
+
+All ingestion methods send feedback via a shared `Notifier` (Telegram bot). The notifier accepts an optional `override_chat_id` so Telegram-originated messages reply to the sender, while other methods use a configured default `notification-chat-id`. If Telegram is unavailable, the notifier logs a warning and the pipeline continues silently.
 
 ## Frontmatter Schema
 
