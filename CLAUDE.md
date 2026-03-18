@@ -19,33 +19,36 @@ CLI/Telegram/Discord/HTTP
 pipeline::process_url()
     |
     +-- hygiene::normalize_url()    # clean + canonicalize
-    +-- borg_log::check_duplicate() # dedup via vault-native log
-    +-- router::classify_url()      # YouTube vs article vs shorts
-    +-- fabric::*                   # fetch, summarize, tag, classify
+    +-- ledger::check_duplicate()   # dedup via vault-native log
+    +-- router::classify_url()      # YouTube vs article vs shorts vs github vs social vs reddit
+    +-- fabric::*                   # fetch, summarize, tag, classify domain
     +-- markdown::render_note()     # frontmatter + body
-    +-- write to vault
-    +-- borg_log::append_entry()    # log the ingest
+    +-- write to vault (notes/)     # all ingested notes go to notes/
+    +-- ledger::append_entry()      # log the ingest
 ```
 
 ## Frontmatter Schema
 
-The current frontmatter spec for ingested notes:
+The current frontmatter spec for ingested notes (aligned with `system/frontmatter.md` in the vault):
 
 ```yaml
 ---
 title: "Note Title"
 date: YYYY-MM-DD
-day: DayOfWeek
-time: "HH:MM"
-source: "https://canonical-url"    # was `url:` in obsidian-bookmark era
-type: youtube | article            # was `link` in obsidian-bookmark era
+source: "https://canonical-url"
+type: youtube | article | github | social | reddit | image | pdf | audio | note | vocab | document | code
+domain: ai | tech | football | work | writing | music | spanish | knowledge | resources | system
+origin: assisted                   # always "assisted" for ingested content
 method: telegram | discord | http | clipboard | cli
+trace: tg-7f3a2c                   # method-prefixed trace ID
 tags:
   - lowercase-hyphenated
-uploader: "Channel Name"           # youtube only
-duration_min: 10                   # youtube only
+creator: "Channel Name"            # youtube/article creator
+duration: 10                       # video/audio length in minutes
 ---
 ```
+
+Organization is **property-driven** via the `domain` field, not folder-based. All ingested notes go to `notes/`. See `~/repos/scottidler/obsidian/system/frontmatter.md` for the canonical schema reference.
 
 ### IMPORTANT: Schema Evolution via Migration
 
@@ -92,7 +95,8 @@ Canonicalization rules are config-driven with built-in defaults. Add new rules
 
 ## Borg Ledger and Dedup
 
-- `~/repos/scottidler/obsidian/⚙️ System/borg-ledger.md` - append-only markdown table
+- `~/repos/scottidler/obsidian/system/borg-ledger.md` - append-only markdown table
+- Columns: Date, Time, Method, Status, Title, Source, Domain, Trace
 - Every ingest (success, failure, duplicate) is logged
 - Dedup checks this file before processing - only `✅` rows count as duplicates
 - `--force` flag on `ingest` bypasses dedup
@@ -100,7 +104,7 @@ Canonicalization rules are config-driven with built-in defaults. Add new rules
 
 ## Borg Dashboard
 
-- `~/repos/scottidler/obsidian/⚙️ System/borg-dashboard.md` - Dataview queries
+- `~/repos/scottidler/obsidian/system/borg-dashboard.md` - Dataview queries
 - Shows notes added today, yesterday, this week, this month
 - Self-updating via Dataview - obsidian-borg creates it once, never modifies
 
@@ -108,7 +112,9 @@ Canonicalization rules are config-driven with built-in defaults. Add new rules
 
 - **Filenames:** Always lowercase-hyphenated slugs (e.g., `claude-code-obsidian-guide.md`). No spaces, no uppercase, no underscores. The `title` frontmatter field carries the human-readable display name. `sanitize_filename()` in `src/hygiene.rs` enforces this.
 - Tags: always lowercase-hyphenated (`ai-llm` not `AI_LLM`)
-- Vault folders: emoji prefixes on top-level only, lowercase subdirectories
+- Vault folders: `inbox/`, `daily/`, `notes/`, `system/` (all lowercase, no emojis)
+- All ingested notes go to `notes/` - domain is a frontmatter property, not a folder
+- Attachments go to `system/attachments/`
 - Config secrets can be file paths or env var names (resolved by `config::resolve_secret`)
 - Fabric binary at `/home/saidler/go/bin/fabric`
 - NEVER use `pip install` - use `pipx`

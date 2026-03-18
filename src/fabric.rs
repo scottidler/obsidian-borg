@@ -16,7 +16,8 @@ pub struct YouTubeContent {
 
 #[derive(Debug, Deserialize)]
 pub struct ClassificationResult {
-    pub folder: String,
+    #[serde(alias = "folder")]
+    pub domain: String,
     pub confidence: f64,
     #[serde(default)]
     pub suggested_tags: Vec<String>,
@@ -262,7 +263,7 @@ mod tests {
         let result = extract_json(input);
         assert!(result.starts_with('{'));
         let parsed: ClassificationResult = serde_json::from_str(&result).expect("valid json");
-        assert_eq!(parsed.folder, "Tech");
+        assert_eq!(parsed.domain, "Tech");
     }
 
     #[test]
@@ -270,7 +271,7 @@ mod tests {
         let input = "```json\n{\"folder\": \"Tech\", \"confidence\": 0.8}\n```";
         let result = extract_json(input);
         let parsed: ClassificationResult = serde_json::from_str(&result).expect("valid json");
-        assert_eq!(parsed.folder, "Tech");
+        assert_eq!(parsed.domain, "Tech");
     }
 
     #[test]
@@ -302,7 +303,7 @@ mod tests {
     fn test_classification_result_deserialize() {
         let json = r#"{"folder": "Tech/AI-LLM", "confidence": 0.85, "reasoning": "AI content", "suggested_tags": ["ai", "llm"]}"#;
         let result: ClassificationResult = serde_json::from_str(json).expect("valid");
-        assert_eq!(result.folder, "Tech/AI-LLM");
+        assert_eq!(result.domain, "Tech/AI-LLM");
         assert!((result.confidence - 0.85).abs() < f64::EPSILON);
         assert_eq!(result.suggested_tags, vec!["ai", "llm"]);
     }

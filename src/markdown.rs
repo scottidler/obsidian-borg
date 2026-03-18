@@ -14,6 +14,7 @@ pub struct NoteContent {
     pub embed_code: Option<String>,
     pub method: Option<IngestMethod>,
     pub trace_id: Option<String>,
+    pub domain: String,
 }
 
 pub enum ContentType {
@@ -60,8 +61,6 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         .unwrap_or(chrono_tz::America::Los_Angeles);
     let now = Utc::now().with_timezone(&tz);
     let date = now.format("%Y-%m-%d").to_string();
-    let day = now.format("%A").to_string();
-    let time = now.format("%H:%M").to_string();
 
     let mut all_tags = frontmatter_config.default_tags.clone();
     all_tags.extend(note.tags.clone());
@@ -90,10 +89,7 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         ContentType::Code { .. } => "code",
     };
 
-    let mut fm = format!(
-        "---\ntitle: \"{}\"\ndate: {date}\nday: {day}\ntime: \"{time}\"\n",
-        escape_yaml_string(&note.title),
-    );
+    let mut fm = format!("---\ntitle: \"{}\"\ndate: {date}\n", escape_yaml_string(&note.title),);
 
     if let Some(source) = &note.source_url {
         fm.push_str(&format!("source: \"{source}\"\n"));
@@ -102,21 +98,23 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         fm.push_str(&format!("asset: \"{asset}\"\n"));
     }
     fm.push_str(&format!("type: {type_field}\n"));
+    fm.push_str(&format!("domain: {}\n", note.domain));
+    fm.push_str("origin: assisted\n");
 
     if let Some(method) = &note.method {
         fm.push_str(&format!("method: {method}\n"));
     }
 
     if let Some(ref tid) = note.trace_id {
-        fm.push_str(&format!("trace_id: {tid}\n"));
+        fm.push_str(&format!("trace: {tid}\n"));
     }
 
     fm.push_str(&format!("tags:\n{tags_yaml}\n"));
 
-    if !frontmatter_config.default_author.is_empty() {
+    if !frontmatter_config.default_creator.is_empty() {
         fm.push_str(&format!(
-            "author: \"{}\"\n",
-            escape_yaml_string(&frontmatter_config.default_author)
+            "creator: \"{}\"\n",
+            escape_yaml_string(&frontmatter_config.default_creator)
         ));
     }
 
@@ -127,7 +125,7 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
         } => {
             let minutes = (*duration_secs / 60.0).round() as u32;
             fm.push_str(&format!(
-                "uploader: \"{}\"\nduration_min: {minutes}\n",
+                "creator: \"{}\"\nduration: {minutes}\n",
                 escape_yaml_string(uploader)
             ));
         }
@@ -136,7 +134,7 @@ pub fn render_note(note: &NoteContent, frontmatter_config: &FrontmatterConfig) -
             ..
         } => {
             let minutes = (*secs / 60.0).round() as u32;
-            fm.push_str(&format!("duration_min: {minutes}\n"));
+            fm.push_str(&format!("duration: {minutes}\n"));
         }
         ContentType::Code { language } => {
             fm.push_str(&format!("language: \"{language}\"\n"));
@@ -195,7 +193,7 @@ mod tests {
     fn test_config() -> FrontmatterConfig {
         FrontmatterConfig {
             default_tags: vec![],
-            default_author: String::new(),
+            default_creator: String::new(),
             timezone: "UTC".to_string(),
         }
     }
@@ -212,12 +210,13 @@ mod tests {
             embed_code: None,
             method: None,
             trace_id: None,
+            domain: "tech".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("title: \"Test Article\""));
         assert!(rendered.contains("type: article"));
-        assert!(rendered.contains("day:"));
-        assert!(rendered.contains("time:"));
+        assert!(rendered.contains("domain: tech"));
+        assert!(rendered.contains("origin: assisted"));
         assert!(rendered.contains("  - rust"));
         assert!(rendered.contains("## Summary"));
         assert!(rendered.contains("This is a summary."));
@@ -239,12 +238,13 @@ mod tests {
             embed_code: Some(r#"<iframe width="854" height="480" src="https://www.youtube.com/embed/abc" frameborder="0" allowfullscreen></iframe>"#.to_string()),
             method: Some(IngestMethod::Telegram),
             trace_id: None,
+            domain: "ai".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: youtube"));
         assert!(rendered.contains("method: telegram"));
-        assert!(rendered.contains("uploader: \"TechChannel\""));
-        assert!(rendered.contains("duration_min: 10"));
+        assert!(rendered.contains("creator: \"TechChannel\""));
+        assert!(rendered.contains("duration: 10"));
         assert!(rendered.contains("iframe"));
         assert!(rendered.contains("## Summary"));
     }
@@ -253,7 +253,7 @@ mod tests {
     fn test_render_with_default_tags() {
         let config = FrontmatterConfig {
             default_tags: vec!["obsidian-borg".to_string()],
-            default_author: "Scott".to_string(),
+            default_creator: "Scott".to_string(),
             timezone: "UTC".to_string(),
         };
         let note = NoteContent {
@@ -266,11 +266,12 @@ mod tests {
             embed_code: None,
             method: None,
             trace_id: None,
+            domain: "ai".to_string(),
         };
         let rendered = render_note(&note, &config);
         assert!(rendered.contains("  - ai"));
         assert!(rendered.contains("  - obsidian-borg"));
-        assert!(rendered.contains("author: \"Scott\""));
+        assert!(rendered.contains("creator: \"Scott\""));
     }
 
     #[test]
@@ -285,6 +286,7 @@ mod tests {
             embed_code: None,
             method: Some(IngestMethod::Telegram),
             trace_id: None,
+            domain: "inbox".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: note"));
@@ -297,15 +299,16 @@ mod tests {
         let note = NoteContent {
             title: "Whiteboard Photo".to_string(),
             source_url: None,
-            asset_path: Some("⚙️ System/attachments/images/2026-03/whiteboard-a1b2c3d4.png".to_string()),
+            asset_path: Some("system/attachments/images/2026-03/whiteboard-a1b2c3d4.png".to_string()),
             tags: vec!["image".to_string()],
             summary: "A whiteboard diagram.".to_string(),
             content_type: ContentType::Image {
-                asset_path: "⚙️ System/attachments/images/2026-03/whiteboard-a1b2c3d4.png".to_string(),
+                asset_path: "system/attachments/images/2026-03/whiteboard-a1b2c3d4.png".to_string(),
             },
             embed_code: None,
             method: Some(IngestMethod::Cli),
             trace_id: None,
+            domain: "inbox".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: image"));
@@ -325,14 +328,15 @@ mod tests {
             embed_code: None,
             method: Some(IngestMethod::Telegram),
             trace_id: Some("tg-7f3a2c".to_string()),
+            domain: "tech".to_string(),
         };
         let rendered = render_note(&note, &test_config());
-        assert!(rendered.contains("trace_id: tg-7f3a2c"));
+        assert!(rendered.contains("trace: tg-7f3a2c"));
         assert!(rendered.contains("method: telegram"));
-        // trace_id should appear after method
+        // trace should appear after method
         let method_pos = rendered.find("method: telegram").expect("method line");
-        let trace_pos = rendered.find("trace_id: tg-7f3a2c").expect("trace_id line");
-        assert!(trace_pos > method_pos, "trace_id should come after method");
+        let trace_pos = rendered.find("trace: tg-7f3a2c").expect("trace line");
+        assert!(trace_pos > method_pos, "trace should come after method");
     }
 
     #[test]
@@ -347,9 +351,10 @@ mod tests {
             embed_code: None,
             method: None,
             trace_id: None,
+            domain: "inbox".to_string(),
         };
         let rendered = render_note(&note, &test_config());
-        assert!(!rendered.contains("trace_id"));
+        assert!(!rendered.contains("trace:"));
     }
 
     #[test]
@@ -364,6 +369,7 @@ mod tests {
             embed_code: None,
             method: Some(IngestMethod::Telegram),
             trace_id: None,
+            domain: "tech".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: github"));
@@ -381,6 +387,7 @@ mod tests {
             embed_code: None,
             method: Some(IngestMethod::Telegram),
             trace_id: None,
+            domain: "ai".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: social"));
@@ -398,6 +405,7 @@ mod tests {
             embed_code: None,
             method: Some(IngestMethod::Telegram),
             trace_id: None,
+            domain: "football".to_string(),
         };
         let rendered = render_note(&note, &test_config());
         assert!(rendered.contains("type: reddit"));

@@ -188,7 +188,7 @@ pub async fn process_url(
                     status: LedgerStatus::Failed,
                     title: None,
                     source: canonical.clone(),
-                    folder: None,
+                    domain: None,
                     trace_id: Some(trace_id.to_string()),
                 },
             );
@@ -199,7 +199,7 @@ pub async fn process_url(
                 title: None,
                 tags: vec![],
                 elapsed_secs: Some(elapsed.as_secs_f64()),
-                folder: None,
+                domain: None,
                 method: Some(method),
                 canonical_url: Some(canonical),
                 trace_id: None,
@@ -253,7 +253,7 @@ async fn process_url_inner(
                         status: LedgerStatus::Skipped,
                         title: None,
                         source: canonical.clone(),
-                        folder: None,
+                        domain: None,
                         trace_id: Some(trace_id.to_string()),
                     },
                 )?;
@@ -282,7 +282,7 @@ async fn process_url_inner(
                     status: LedgerStatus::Skipped,
                     title: None,
                     source: canonical.clone(),
-                    folder: None,
+                    domain: None,
                     trace_id: Some(trace_id.to_string()),
                 },
             )?;
@@ -350,46 +350,46 @@ async fn process_url_inner(
     all_tags.sort();
     all_tags.dedup();
 
-    // Resolve destination folder (3-tier routing)
-    // If title is still "Unknown" after all extraction attempts, force fallback to Inbox
-    let folder = if title == "Unknown" || title.is_empty() {
-        log::warn!("Title is '{title}', forcing fallback to Inbox");
-        config.routing.fallback_folder.clone()
-    } else if !url_match.folder.is_empty() {
+    // Resolve destination domain (3-tier routing)
+    // If title is still "Unknown" after all extraction attempts, force fallback to inbox
+    let domain = if title == "Unknown" || title.is_empty() {
+        log::warn!("Title is '{title}', forcing fallback to inbox");
+        config.routing.fallback_domain.clone()
+    } else if !url_match.domain.is_empty() {
         // Tier 1: URL-type routing from config
-        log::debug!("Tier 1 routing: URL config -> {}", url_match.folder);
-        url_match.folder.clone()
+        log::debug!("Tier 1 routing: URL config -> {}", url_match.domain);
+        url_match.domain.clone()
     } else if use_fabric {
         // Tier 2: LLM topic classification
         match fabric::classify_topic(&title, &summary, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
                     "Tier 2 routing: LLM classified -> {} (confidence: {:.2})",
-                    result.folder,
+                    result.domain,
                     result.confidence
                 );
                 all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
                 all_tags.sort();
                 all_tags.dedup();
-                result.folder
+                result.domain
             }
             Ok(result) => {
                 log::info!(
                     "Tier 2 routing: low confidence {:.2} for '{}', falling back",
                     result.confidence,
-                    result.folder
+                    result.domain
                 );
-                config.routing.fallback_folder.clone()
+                config.routing.fallback_domain.clone()
             }
             Err(e) => {
                 log::warn!("Tier 2 routing failed: {e:#}, using fallback");
-                config.routing.fallback_folder.clone()
+                config.routing.fallback_domain.clone()
             }
         }
     } else {
         // Tier 3: Fallback
-        log::debug!("Tier 3 routing: fallback -> {}", config.routing.fallback_folder);
-        config.routing.fallback_folder.clone()
+        log::debug!("Tier 3 routing: fallback -> {}", config.routing.fallback_domain);
+        config.routing.fallback_domain.clone()
     };
 
     // Generate embed code for YouTube
@@ -410,24 +410,20 @@ async fn process_url_inner(
         embed_code,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
     // Resolve write path
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
-    log::info!("[{trace_id}] Wrote note: {} (folder: {})", note_path.display(), folder);
+    log::info!("[{trace_id}] Wrote note: {} (domain: {})", note_path.display(), domain);
 
     // Log success to Borg Ledger
     ledger::append_entry(
@@ -439,7 +435,7 @@ async fn process_url_inner(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: canonical.clone(),
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -459,7 +455,7 @@ async fn process_url_inner(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: Some(canonical),
         trace_id: None,
@@ -719,23 +715,23 @@ async fn process_image_inner(
         format!("Image: {}", title)
     };
 
-    let folder = if use_fabric {
+    let domain = if use_fabric {
         match fabric::classify_topic(&title, &summary_text, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
                     "Image routing: LLM classified -> {} (confidence: {:.2})",
-                    result.folder,
+                    result.domain,
                     result.confidence
                 );
                 all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
                 all_tags.sort();
                 all_tags.dedup();
-                result.folder
+                result.domain
             }
-            _ => config.routing.fallback_folder.clone(),
+            _ => config.routing.fallback_domain.clone(),
         }
     } else {
-        config.routing.fallback_folder.clone()
+        config.routing.fallback_domain.clone()
     };
 
     // Build summary: include vision description and extracted text
@@ -763,26 +759,22 @@ async fn process_image_inner(
         embed_code: None,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let note_filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&note_filename);
     std::fs::write(&note_path, &rendered).context("Failed to write image note to vault")?;
 
     log::info!(
-        "[{trace_id}] Wrote image note: {} (folder: {})",
+        "[{trace_id}] Wrote image note: {} (domain: {})",
         note_path.display(),
-        folder
+        domain
     );
 
     // Clean up temp file
@@ -800,7 +792,7 @@ async fn process_image_inner(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: source_display,
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -817,7 +809,7 @@ async fn process_image_inner(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: None,
         trace_id: None,
@@ -983,23 +975,23 @@ async fn process_audio_inner(
         format!("Audio: {}", title)
     };
 
-    let folder = if use_fabric {
+    let domain = if use_fabric {
         match fabric::classify_topic(&title, &summary_text, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
                     "Audio routing: LLM classified -> {} (confidence: {:.2})",
-                    result.folder,
+                    result.domain,
                     result.confidence
                 );
                 all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
                 all_tags.sort();
                 all_tags.dedup();
-                result.folder
+                result.domain
             }
-            _ => config.routing.fallback_folder.clone(),
+            _ => config.routing.fallback_domain.clone(),
         }
     } else {
-        config.routing.fallback_folder.clone()
+        config.routing.fallback_domain.clone()
     };
 
     // Build summary
@@ -1022,26 +1014,22 @@ async fn process_audio_inner(
         embed_code: None,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let note_filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&note_filename);
     std::fs::write(&note_path, &rendered).context("Failed to write audio note to vault")?;
 
     log::info!(
-        "[{trace_id}] Wrote audio note: {} (folder: {})",
+        "[{trace_id}] Wrote audio note: {} (domain: {})",
         note_path.display(),
-        folder
+        domain
     );
 
     // Log to ledger
@@ -1056,7 +1044,7 @@ async fn process_audio_inner(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: source_display,
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -1073,7 +1061,7 @@ async fn process_audio_inner(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: None,
         trace_id: None,
@@ -1279,24 +1267,24 @@ async fn process_document_file_inner(
         format!("{}: {}", kind.label(), title)
     };
 
-    let folder = if use_fabric {
+    let domain = if use_fabric {
         match fabric::classify_topic(&title, &summary_for_classify, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
                     "{} routing: LLM classified -> {} (confidence: {:.2})",
                     kind.label(),
-                    result.folder,
+                    result.domain,
                     result.confidence
                 );
                 all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
                 all_tags.sort();
                 all_tags.dedup();
-                result.folder
+                result.domain
             }
-            _ => config.routing.fallback_folder.clone(),
+            _ => config.routing.fallback_domain.clone(),
         }
     } else {
-        config.routing.fallback_folder.clone()
+        config.routing.fallback_domain.clone()
     };
 
     let note = NoteContent {
@@ -1309,27 +1297,23 @@ async fn process_document_file_inner(
         embed_code: None,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let note_filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&note_filename);
     std::fs::write(&note_path, &rendered).context(format!("Failed to write {} note to vault", kind.label()))?;
 
     log::info!(
-        "[{trace_id}] Wrote {} note: {} (folder: {})",
+        "[{trace_id}] Wrote {} note: {} (domain: {})",
         kind.label(),
         note_path.display(),
-        folder
+        domain
     );
 
     // Clean up temp file
@@ -1347,7 +1331,7 @@ async fn process_document_file_inner(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: source_display,
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -1364,7 +1348,7 @@ async fn process_document_file_inner(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: None,
         trace_id: None,
@@ -1503,23 +1487,23 @@ async fn process_text_inner(
     all_tags.dedup();
 
     // Route via LLM classification
-    let folder = if use_fabric {
+    let domain = if use_fabric {
         match fabric::classify_topic(&title, text, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
                     "Text routing: LLM classified -> {} (confidence: {:.2})",
-                    result.folder,
+                    result.domain,
                     result.confidence
                 );
                 all_tags.extend(result.suggested_tags.into_iter().map(|t| hygiene::sanitize_tag(&t)));
                 all_tags.sort();
                 all_tags.dedup();
-                result.folder
+                result.domain
             }
-            _ => config.routing.fallback_folder.clone(),
+            _ => config.routing.fallback_domain.clone(),
         }
     } else {
-        config.routing.fallback_folder.clone()
+        config.routing.fallback_domain.clone()
     };
 
     let note = NoteContent {
@@ -1532,26 +1516,22 @@ async fn process_text_inner(
         embed_code: None,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
     log::info!(
-        "[{trace_id}] Wrote text note: {} (folder: {})",
+        "[{trace_id}] Wrote text note: {} (domain: {})",
         note_path.display(),
-        folder
+        domain
     );
 
     // Log to ledger
@@ -1569,7 +1549,7 @@ async fn process_text_inner(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: source_display,
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -1586,7 +1566,7 @@ async fn process_text_inner(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: None,
         trace_id: None,
@@ -1614,7 +1594,7 @@ async fn process_vocab(
 
     let use_fabric = fabric::is_available(&config.fabric);
 
-    let (title, content_type, body, folder) = match pattern {
+    let (title, content_type, body, domain) = match pattern {
         TextPattern::Define { word } => {
             // Generate definition via LLM
             let body = if use_fabric {
@@ -1632,7 +1612,7 @@ async fn process_vocab(
 
             // Detect language (simple heuristic: ask LLM or check common patterns)
             let language = detect_language(word, use_fabric, config).await;
-            let folder = resolve_vocab_folder(&language, &config.text_capture);
+            let domain = resolve_vocab_domain(&language, &config.text_capture);
 
             (
                 word.clone(),
@@ -1641,7 +1621,7 @@ async fn process_vocab(
                     language: language.clone(),
                 },
                 body,
-                folder,
+                domain,
             )
         }
         TextPattern::Clarify { word_a, word_b } => {
@@ -1661,7 +1641,7 @@ async fn process_vocab(
             };
 
             let language = detect_language(word_a, use_fabric, config).await;
-            let folder = resolve_vocab_folder(&language, &config.text_capture);
+            let domain = resolve_vocab_domain(&language, &config.text_capture);
 
             (
                 title,
@@ -1671,7 +1651,7 @@ async fn process_vocab(
                     language: language.clone(),
                 },
                 body,
-                folder,
+                domain,
             )
         }
         _ => unreachable!("process_vocab called with non-vocab pattern"),
@@ -1698,26 +1678,22 @@ async fn process_vocab(
         embed_code: None,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write note to vault")?;
 
     log::info!(
-        "[{trace_id}] Wrote vocab note: {} (folder: {})",
+        "[{trace_id}] Wrote vocab note: {} (domain: {})",
         note_path.display(),
-        folder
+        domain
     );
 
     // Log to ledger
@@ -1731,7 +1707,7 @@ async fn process_vocab(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: format!("[{}]", text.trim()),
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -1748,7 +1724,7 @@ async fn process_vocab(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: None,
         trace_id: None,
@@ -2057,7 +2033,7 @@ async fn generate_code_title(text: &str, language: &str, use_fabric: bool, confi
     "Code Snippet".to_string()
 }
 
-/// Process a code snippet: create a note with fenced code block and route to code folder.
+/// Process a code snippet: create a note with fenced code block and route to code domain.
 async fn process_code_snippet(
     text: &str,
     language: &str,
@@ -2095,7 +2071,7 @@ async fn process_code_snippet(
     // Build fenced code block as the summary
     let summary = format!("```{language}\n{text}\n```");
 
-    let folder = config.text_capture.code_folder.clone();
+    let domain = config.text_capture.code_domain.clone();
 
     let note = NoteContent {
         title: title.clone(),
@@ -2109,26 +2085,22 @@ async fn process_code_snippet(
         embed_code: None,
         method: Some(method),
         trace_id: Some(trace_id.to_string()),
+        domain: domain.clone(),
     };
 
     let rendered = markdown::render_note(&note, &config.frontmatter);
     let filename = format!("{}.md", hygiene::sanitize_filename(&title));
 
-    let dest_path = resolve_destination(
-        &config.vault.root_path,
-        &config.vault.inbox_path,
-        &folder,
-        &config.routing,
-    );
+    let dest_path = resolve_destination(&config.vault.root_path);
     std::fs::create_dir_all(&dest_path).context("Failed to create destination directory")?;
 
     let note_path = dest_path.join(&filename);
     std::fs::write(&note_path, &rendered).context("Failed to write code note to vault")?;
 
     log::info!(
-        "[{trace_id}] Wrote code snippet note: {} (folder: {}, language: {})",
+        "[{trace_id}] Wrote code snippet note: {} (domain: {}, language: {})",
         note_path.display(),
-        folder,
+        domain,
         language
     );
 
@@ -2144,7 +2116,7 @@ async fn process_code_snippet(
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
             source: source_display,
-            folder: Some(folder.clone()),
+            domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
         },
     )?;
@@ -2161,7 +2133,7 @@ async fn process_code_snippet(
         title: Some(title),
         tags: all_tags,
         elapsed_secs: None,
-        folder: Some(folder),
+        domain: Some(domain),
         method: Some(method),
         canonical_url: None,
         trace_id: None,
@@ -2193,36 +2165,16 @@ async fn detect_language(word: &str, use_fabric: bool, config: &Config) -> Strin
     "english".to_string()
 }
 
-fn resolve_vocab_folder(language: &str, text_capture: &crate::config::TextCaptureConfig) -> String {
-    text_capture
-        .vocab_folders
-        .get(language)
-        .or_else(|| text_capture.vocab_folders.get("default"))
-        .cloned()
-        .unwrap_or_else(|| "🧠 Knowledge/vocab".to_string())
+fn resolve_vocab_domain(language: &str, text_capture: &crate::config::TextCaptureConfig) -> String {
+    if language == "spanish" {
+        "spanish".to_string()
+    } else {
+        text_capture.vocab_domain.clone()
+    }
 }
 
-fn resolve_destination(
-    root_path: &str,
-    inbox_path: &str,
-    folder: &str,
-    routing: &crate::config::RoutingConfig,
-) -> PathBuf {
-    if folder.is_empty() || folder == routing.fallback_folder {
-        // Use inbox_path for fallback/Inbox
-        return expand_tilde(inbox_path);
-    }
-
-    let root = expand_tilde(root_path);
-    let mut dest = root.join(folder);
-
-    // Add date subfolder for research content
-    if routing.research_date_subfolder && folder.contains("research") {
-        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        dest = dest.join(date);
-    }
-
-    dest
+fn resolve_destination(root_path: &str) -> PathBuf {
+    expand_tilde(root_path).join("notes")
 }
 
 /// Build an obsidian://open deep link from vault name and note path.
@@ -2326,21 +2278,21 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_vocab_folder_english() {
+    fn test_resolve_vocab_domain_english() {
         let config = crate::config::TextCaptureConfig::default();
-        assert_eq!(resolve_vocab_folder("english", &config), "🧠 Knowledge/english-vocab");
+        assert_eq!(resolve_vocab_domain("english", &config), "knowledge");
     }
 
     #[test]
-    fn test_resolve_vocab_folder_spanish() {
+    fn test_resolve_vocab_domain_spanish() {
         let config = crate::config::TextCaptureConfig::default();
-        assert_eq!(resolve_vocab_folder("spanish", &config), "🇪🇸 Spanish/vocabulary");
+        assert_eq!(resolve_vocab_domain("spanish", &config), "spanish");
     }
 
     #[test]
-    fn test_resolve_vocab_folder_unknown() {
+    fn test_resolve_vocab_domain_unknown() {
         let config = crate::config::TextCaptureConfig::default();
-        assert_eq!(resolve_vocab_folder("french", &config), "🧠 Knowledge/vocab");
+        assert_eq!(resolve_vocab_domain("french", &config), "knowledge");
     }
 
     #[test]
@@ -2357,30 +2309,15 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_destination_fallback() {
-        let routing = crate::config::RoutingConfig {
-            fallback_folder: "Inbox".to_string(),
-            ..Default::default()
-        };
-        let dest = resolve_destination("/vault", "/vault/Inbox", "Inbox", &routing);
-        assert_eq!(dest, PathBuf::from("/vault/Inbox"));
+    fn test_resolve_destination_always_notes() {
+        let dest = resolve_destination("/vault");
+        assert_eq!(dest, PathBuf::from("/vault/notes"));
     }
 
     #[test]
-    fn test_resolve_destination_empty_folder() {
-        let routing = crate::config::RoutingConfig::default();
-        let dest = resolve_destination("/vault", "/vault/Inbox", "", &routing);
-        assert_eq!(dest, PathBuf::from("/vault/Inbox"));
-    }
-
-    #[test]
-    fn test_resolve_destination_specific_folder() {
-        let routing = crate::config::RoutingConfig {
-            research_date_subfolder: false,
-            ..Default::default()
-        };
-        let dest = resolve_destination("/vault", "/vault/Inbox", "Tech/AI-LLM", &routing);
-        assert_eq!(dest, PathBuf::from("/vault/Tech/AI-LLM"));
+    fn test_resolve_destination_with_trailing_slash() {
+        let dest = resolve_destination("/vault/");
+        assert_eq!(dest, PathBuf::from("/vault/notes"));
     }
 
     #[test]
@@ -2426,18 +2363,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_destination_research_date_subfolder() {
-        let routing = crate::config::RoutingConfig {
-            research_date_subfolder: true,
-            ..Default::default()
-        };
-        let dest = resolve_destination("/vault", "/vault/Inbox", "Football/research", &routing);
-        // Should have a date subfolder
-        let dest_str = dest.to_string_lossy();
-        assert!(dest_str.starts_with("/vault/Football/research/"));
-        // Date format: YYYY-MM-DD
-        let date_part = dest_str.strip_prefix("/vault/Football/research/").expect("prefix");
-        assert_eq!(date_part.len(), 10); // YYYY-MM-DD
+    fn test_resolve_destination_absolute_path() {
+        let dest = resolve_destination("/home/user/obsidian");
+        assert_eq!(dest, PathBuf::from("/home/user/obsidian/notes"));
     }
 
     #[test]
@@ -2627,12 +2555,13 @@ int main() {
             embed_code: None,
             method: Some(IngestMethod::Cli),
             trace_id: None,
+            domain: "tech".to_string(),
         };
         let rendered = markdown::render_note(
             &note,
             &crate::config::FrontmatterConfig {
                 default_tags: vec![],
-                default_author: String::new(),
+                default_creator: String::new(),
                 timezone: "UTC".to_string(),
             },
         );
@@ -2741,28 +2670,28 @@ int main() {
     }
 
     #[test]
-    fn test_build_obsidian_url_emoji_folder() {
+    fn test_build_obsidian_url_notes_folder() {
         let url = build_obsidian_url(
             "obsidian",
-            "/home/user/obsidian/\u{1f4e5} Inbox/claude-code-guide.md",
+            "/home/user/obsidian/notes/claude-code-guide.md",
             "/home/user/obsidian/",
         );
-        let url = url.expect("should produce a URL for emoji folder path");
+        let url = url.expect("should produce a URL for notes folder path");
         assert!(url.starts_with("obsidian://open?vault=obsidian&file="));
-        assert!(url.contains("Inbox"));
+        assert!(url.contains("notes"));
         assert!(url.contains("claude-code-guide.md"));
     }
 
     #[test]
-    fn test_build_obsidian_url_nested_folder() {
+    fn test_build_obsidian_url_nested_notes() {
         let url = build_obsidian_url(
             "obsidian",
-            "/home/user/obsidian/Tech/AI-LLM/my-note.md",
+            "/home/user/obsidian/notes/my-note.md",
             "/home/user/obsidian/",
         );
         assert_eq!(
             url,
-            Some("obsidian://open?vault=obsidian&file=Tech%2FAI-LLM%2Fmy-note.md".to_string())
+            Some("obsidian://open?vault=obsidian&file=notes%2Fmy-note.md".to_string())
         );
     }
 

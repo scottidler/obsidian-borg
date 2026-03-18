@@ -213,19 +213,17 @@ pub struct MigrationConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct TextCaptureConfig {
-    pub vocab_folders: std::collections::HashMap<String, String>,
-    pub code_folder: String,
+    #[serde(alias = "vocab-folders")]
+    pub vocab_domain: String,
+    #[serde(alias = "code-folder")]
+    pub code_domain: String,
 }
 
 impl Default for TextCaptureConfig {
     fn default() -> Self {
-        let mut vocab_folders = std::collections::HashMap::new();
-        vocab_folders.insert("english".to_string(), "🧠 Knowledge/english-vocab".to_string());
-        vocab_folders.insert("spanish".to_string(), "🇪🇸 Spanish/vocabulary".to_string());
-        vocab_folders.insert("default".to_string(), "🧠 Knowledge/vocab".to_string());
         Self {
-            vocab_folders,
-            code_folder: "🤖 Tech/snippets".to_string(),
+            vocab_domain: "knowledge".to_string(),
+            code_domain: "tech".to_string(),
         }
     }
 }
@@ -236,7 +234,7 @@ fn default_links() -> Vec<LinkConfig> {
             name: "shorts".to_string(),
             regex: r"https?://(?:www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]+)".to_string(),
             resolution: "480p".to_string(),
-            folder: "".to_string(),
+            domain: "".to_string(),
         },
         LinkConfig {
             name: "youtube".to_string(),
@@ -244,31 +242,31 @@ fn default_links() -> Vec<LinkConfig> {
                 r"https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/|music\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]+)"
                     .to_string(),
             resolution: "FWVGA".to_string(),
-            folder: "".to_string(),
+            domain: "".to_string(),
         },
         LinkConfig {
             name: "github".to_string(),
             regex: r"https?://github\.com/[^/]+/[^/]+/?(\?[^ ]*)?$".to_string(),
             resolution: "FWVGA".to_string(),
-            folder: "".to_string(),
+            domain: "".to_string(),
         },
         LinkConfig {
             name: "social".to_string(),
             regex: r"https?://x\.com/[^/]+/status/\d+".to_string(),
             resolution: "FWVGA".to_string(),
-            folder: "".to_string(),
+            domain: "".to_string(),
         },
         LinkConfig {
             name: "reddit".to_string(),
             regex: r"https?://(?:www\.)?reddit\.com/r/[^/]+/comments/".to_string(),
             resolution: "FWVGA".to_string(),
-            folder: "".to_string(),
+            domain: "".to_string(),
         },
         LinkConfig {
             name: "default".to_string(),
             regex: r".*".to_string(),
             resolution: "FWVGA".to_string(),
-            folder: "".to_string(),
+            domain: "".to_string(),
         },
     ]
 }
@@ -279,8 +277,8 @@ pub struct LinkConfig {
     pub regex: String,
     #[serde(default = "default_resolution")]
     pub resolution: String,
-    #[serde(default)]
-    pub folder: String,
+    #[serde(default, alias = "folder")]
+    pub domain: String,
 }
 
 fn default_resolution() -> String {
@@ -318,8 +316,8 @@ impl Default for FabricConfig {
 pub struct FrontmatterConfig {
     #[serde(default)]
     pub default_tags: Vec<String>,
-    #[serde(default)]
-    pub default_author: String,
+    #[serde(default, alias = "default-author")]
+    pub default_creator: String,
     pub timezone: String,
 }
 
@@ -327,7 +325,7 @@ impl Default for FrontmatterConfig {
     fn default() -> Self {
         Self {
             default_tags: vec![],
-            default_author: String::new(),
+            default_creator: String::new(),
             timezone: "America/Los_Angeles".to_string(),
         }
     }
@@ -337,8 +335,8 @@ impl Default for FrontmatterConfig {
 #[serde(default, rename_all = "kebab-case")]
 pub struct RoutingConfig {
     pub confidence_threshold: f64,
-    pub fallback_folder: String,
-    pub research_date_subfolder: bool,
+    #[serde(alias = "fallback-folder")]
+    pub fallback_domain: String,
     #[serde(default)]
     pub routes: Vec<TopicRoute>,
 }
@@ -347,8 +345,7 @@ impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
             confidence_threshold: 0.6,
-            fallback_folder: "Inbox".to_string(),
-            research_date_subfolder: true,
+            fallback_domain: "inbox".to_string(),
             routes: vec![],
         }
     }
@@ -357,7 +354,7 @@ impl Default for RoutingConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TopicRoute {
     pub keywords: Vec<String>,
-    pub folder: String,
+    pub domain: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -485,7 +482,7 @@ impl Default for VaultConfig {
     fn default() -> Self {
         Self {
             root_path: "~/obsidian-vault".to_string(),
-            inbox_path: "~/obsidian-vault/Inbox".to_string(),
+            inbox_path: "~/obsidian-vault/inbox".to_string(),
             vault_name: "obsidian".to_string(),
         }
     }
@@ -553,7 +550,7 @@ server:
   host: "127.0.0.1"
   port: 9090
 vault:
-  inbox-path: "/tmp/vault/Inbox"
+  inbox-path: "/tmp/vault/inbox"
 transcriber:
   url: "http://192.168.1.100:8090"
   timeout-secs: 60
@@ -567,7 +564,7 @@ debug: true
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 9090);
-        assert_eq!(config.vault.inbox_path, "/tmp/vault/Inbox");
+        assert_eq!(config.vault.inbox_path, "/tmp/vault/inbox");
         assert_eq!(config.transcriber.url, "http://192.168.1.100:8090");
         assert_eq!(config.transcriber.timeout_secs, 60);
         assert_eq!(config.groq.model, "whisper-large-v3-turbo");

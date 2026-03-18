@@ -31,7 +31,7 @@ pub fn store_asset(
 
     let unique_filename = format!("{stem}-{hash_prefix}{ext}");
 
-    let attachments_dir = vault_root.join("⚙️ System/attachments").join(subdirectory);
+    let attachments_dir = vault_root.join("system/attachments").join(subdirectory);
     std::fs::create_dir_all(&attachments_dir).context(format!(
         "Failed to create attachment directory: {}",
         attachments_dir.display()
@@ -40,7 +40,7 @@ pub fn store_asset(
     let absolute_path = attachments_dir.join(&unique_filename);
     std::fs::write(&absolute_path, data).context("Failed to write asset file")?;
 
-    let relative_path = format!("⚙️ System/attachments/{subdirectory}/{unique_filename}");
+    let relative_path = format!("system/attachments/{subdirectory}/{unique_filename}");
 
     Ok((absolute_path, relative_path))
 }
@@ -99,7 +99,7 @@ mod tests {
 
         assert!(abs_path.exists(), "File should exist at {}", abs_path.display());
         assert_eq!(fs::read(&abs_path).expect("read"), data);
-        assert!(rel_path.starts_with("⚙️ System/attachments/images/2026-03/"));
+        assert!(rel_path.starts_with("system/attachments/images/2026-03/"));
         assert!(rel_path.ends_with(".png"));
         assert!(rel_path.contains("-")); // has hash suffix
 

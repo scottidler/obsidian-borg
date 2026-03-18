@@ -3,7 +3,7 @@ server:
   port: 8080
 
 vault:
-  inbox-path: ~/obsidian-vault/Inbox
+  inbox-path: ~/obsidian-vault/inbox
   vault-name: obsidian                               # Obsidian vault name for deep links
 
 transcriber:
@@ -98,6 +98,6 @@ migration:
   seed-borg-log: true        # backfill Borg Ledger with existing notes' URLs
 
   skip-folders:
-    - "⚙️ System"
-    - "📆 Daily"
-    - "templates"
+    - system
+    - daily
+    - templates

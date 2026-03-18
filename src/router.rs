@@ -20,7 +20,7 @@ const SHORTS_RESOLUTIONS: &[(&str, (usize, usize))] =
 pub struct UrlMatch {
     pub url: String,
     pub link_name: String,
-    pub folder: String,
+    pub domain: String,
     pub width: usize,
     pub height: usize,
 }
@@ -46,7 +46,7 @@ pub fn classify_url(normalized_url: &str, links: &[LinkConfig]) -> eyre::Result<
             return Ok(UrlMatch {
                 url: normalized_url.to_string(),
                 link_name: link.name.clone(),
-                folder: link.folder.clone(),
+                domain: link.domain.clone(),
                 width,
                 height,
             });
@@ -57,7 +57,7 @@ pub fn classify_url(normalized_url: &str, links: &[LinkConfig]) -> eyre::Result<
     Ok(UrlMatch {
         url: normalized_url.to_string(),
         link_name: "default".to_string(),
-        folder: String::new(),
+        domain: String::new(),
         width: 854,
         height: 480,
     })
@@ -104,12 +104,12 @@ pub fn format_reply(result: &IngestResult, url: &str) -> String {
                         .join(", ")
                 )
             };
-            let folder_info = result
-                .folder
+            let domain_info = result
+                .domain
                 .as_ref()
-                .map(|f| format!("\nFolder: {f}"))
+                .map(|f| format!("\nDomain: {f}"))
                 .unwrap_or_default();
-            format!("{prefix}Saved: {title}{elapsed}{tags}{folder_info}")
+            format!("{prefix}Saved: {title}{elapsed}{tags}{domain_info}")
         }
         IngestStatus::Duplicate { original_date } => {
             format!("{prefix}Duplicate{elapsed}: already ingested on {original_date}\nURL: {url}")
@@ -131,37 +131,37 @@ mod tests {
                 name: "shorts".to_string(),
                 regex: r"https?://(?:www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]+)".to_string(),
                 resolution: "480p".to_string(),
-                folder: "".to_string(),
+                domain: "".to_string(),
             },
             LinkConfig {
                 name: "youtube".to_string(),
                 regex: r"https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/|music\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]+)".to_string(),
                 resolution: "FWVGA".to_string(),
-                folder: "".to_string(),
+                domain: "".to_string(),
             },
             LinkConfig {
                 name: "github".to_string(),
                 regex: r"https?://github\.com/[^/]+/[^/]+/?(\?[^ ]*)?$".to_string(),
                 resolution: "FWVGA".to_string(),
-                folder: "".to_string(),
+                domain: "".to_string(),
             },
             LinkConfig {
                 name: "social".to_string(),
                 regex: r"https?://x\.com/[^/]+/status/\d+".to_string(),
                 resolution: "FWVGA".to_string(),
-                folder: "".to_string(),
+                domain: "".to_string(),
             },
             LinkConfig {
                 name: "reddit".to_string(),
                 regex: r"https?://(?:www\.)?reddit\.com/r/[^/]+/comments/".to_string(),
                 resolution: "FWVGA".to_string(),
-                folder: "".to_string(),
+                domain: "".to_string(),
             },
             LinkConfig {
                 name: "default".to_string(),
                 regex: r".*".to_string(),
                 resolution: "FWVGA".to_string(),
-                folder: "".to_string(),
+                domain: "".to_string(),
             },
         ]
     }
@@ -283,10 +283,10 @@ mod tests {
             name: "youtube".to_string(),
             regex: r"https?://(?:www\.)?youtube\.com/watch".to_string(),
             resolution: "FHD".to_string(),
-            folder: "Videos".to_string(),
+            domain: "Videos".to_string(),
         }];
         let result = classify_url("https://www.youtube.com/watch?v=abc", &links).expect("valid");
-        assert_eq!(result.folder, "Videos");
+        assert_eq!(result.domain, "Videos");
         assert_eq!(result.width, 1920);
         assert_eq!(result.height, 1080);
     }
@@ -369,11 +369,11 @@ mod tests {
             note_path: Some("/vault/Tech/Test.md".to_string()),
             title: Some("Test".to_string()),
             tags: vec![],
-            folder: Some("Tech/AI-LLM".to_string()),
+            domain: Some("Tech/AI-LLM".to_string()),
             ..Default::default()
         };
         let reply = format_reply(&result, "https://example.com");
-        assert_eq!(reply, "Saved: Test\nFolder: Tech/AI-LLM");
+        assert_eq!(reply, "Saved: Test\nDomain: Tech/AI-LLM");
     }
 
     #[test]
@@ -418,12 +418,12 @@ mod tests {
             title: Some("Test Article".to_string()),
             tags: vec!["ai".to_string()],
             elapsed_secs: Some(5.7),
-            folder: Some("Work".to_string()),
+            domain: Some("Work".to_string()),
             trace_id: Some("tg-7f3a2c".to_string()),
             ..Default::default()
         };
         let reply = format_reply(&result, "https://example.com");
-        assert_eq!(reply, "[tg-7f3a2c] Saved: Test Article (5.7s)\nTags: #ai\nFolder: Work");
+        assert_eq!(reply, "[tg-7f3a2c] Saved: Test Article (5.7s)\nTags: #ai\nDomain: Work");
     }
 
     #[test]

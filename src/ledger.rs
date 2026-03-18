@@ -29,13 +29,16 @@ pub struct LedgerEntry {
     pub status: LedgerStatus,
     pub title: Option<String>,
     pub source: String,
-    pub folder: Option<String>,
+    pub domain: Option<String>,
     pub trace_id: Option<String>,
 }
 
 const LEDGER_FRONTMATTER: &str = r#"---
+title: Borg Ledger
 date: {date}
 type: system
+domain: system
+origin: human
 tags:
   - obsidian-borg
   - system
@@ -43,16 +46,18 @@ tags:
 
 # Borg Ledger
 
-All URLs ingested by obsidian-borg. This file is machine-maintained — do not edit the table manually.
+All URLs ingested by obsidian-borg. This file is machine-maintained - do not edit the table manually.
 
-| Date | Time | Method | Status | Title | Source | Folder | Trace |
+See also: [[borg-dashboard]]
+
+| Date | Time | Method | Status | Title | Source | Domain | Trace |
 |------|------|--------|--------|-------|--------|--------|-------|
 "#;
 
 /// Resolve the Borg Ledger path from config.
 pub fn ledger_path(config: &Config) -> PathBuf {
     let root = expand_tilde(&config.vault.root_path);
-    root.join("⚙️ System").join("borg-ledger.md")
+    root.join("system").join("borg-ledger.md")
 }
 
 /// Create the Borg Ledger file with frontmatter and header if it doesn't exist.
@@ -91,7 +96,7 @@ pub fn check_duplicate(ledger_path: &Path, canonical_url: &str) -> Result<Option
             continue;
         }
         let cols: Vec<&str> = line.split('|').collect();
-        // Expected: ["", " Date ", " Time ", " Method ", " Status ", " Title ", " Source ", " Folder ", ""]
+        // Expected: ["", " Date ", " Time ", " Method ", " Status ", " Title ", " Source ", " Domain ", ""]
         if cols.len() < 8 {
             continue;
         }
@@ -121,12 +126,12 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
         .as_ref()
         .map(|t| format!("[[{}]]", t))
         .unwrap_or_else(|| "—".to_string());
-    let folder_display = entry.folder.as_deref().unwrap_or("—");
+    let domain_display = entry.domain.as_deref().unwrap_or("-");
     let trace_display = entry.trace_id.as_deref().unwrap_or("-");
 
     let row = format!(
         "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
-        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, folder_display, trace_display,
+        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, domain_display, trace_display,
     );
 
     use std::io::Write;
@@ -261,7 +266,7 @@ mod tests {
             status: LedgerStatus::Completed,
             title: Some("Test Article".to_string()),
             source: "https://example.com/article".to_string(),
-            folder: Some("📥 Inbox".to_string()),
+            domain: Some("inbox".to_string()),
             trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
@@ -289,7 +294,7 @@ mod tests {
             status: LedgerStatus::Failed,
             title: None,
             source: "https://example.com/broken".to_string(),
-            folder: None,
+            domain: None,
             trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
@@ -313,7 +318,7 @@ mod tests {
             status: LedgerStatus::Skipped,
             title: None,
             source: "https://example.com/dup".to_string(),
-            folder: None,
+            domain: None,
             trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
@@ -344,7 +349,7 @@ mod tests {
             status: LedgerStatus::Completed,
             title: Some("Test Note".to_string()),
             source: "https://example.com".to_string(),
-            folder: Some("Work".to_string()),
+            domain: Some("work".to_string()),
             trace_id: Some("tg-7f3a2c".to_string()),
         };
         append_entry(&path, &entry).expect("append");
@@ -368,7 +373,7 @@ mod tests {
             status: LedgerStatus::Completed,
             title: Some("Test".to_string()),
             source: "https://example.com".to_string(),
-            folder: None,
+            domain: None,
             trace_id: None,
         };
         append_entry(&path, &entry).expect("append");

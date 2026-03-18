@@ -4,8 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DASHBOARD_CONTENT: &str = r#"---
+title: Borg Dashboard
 date: {date}
 type: system
+domain: system
+origin: human
 tags:
   - obsidian-borg
   - system
@@ -22,7 +25,7 @@ TABLE WITHOUT ID
   link(file.link, title) as "Title",
   type as "Type",
   method as "Via",
-  file.folder as "Folder"
+  domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date = date(today)
 SORT time DESC
 ```
@@ -34,7 +37,7 @@ TABLE WITHOUT ID
   link(file.link, title) as "Title",
   type as "Type",
   method as "Via",
-  file.folder as "Folder"
+  domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date = date(today) - dur(1 day)
 SORT time DESC
 ```
@@ -46,7 +49,7 @@ TABLE WITHOUT ID
   link(file.link, title) as "Title",
   type as "Type",
   method as "Via",
-  file.folder as "Folder"
+  domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date >= date(today) - dur(7 day) AND date < date(today) - dur(1 day)
 SORT date DESC
 ```
@@ -58,7 +61,7 @@ TABLE WITHOUT ID
   link(file.link, title) as "Title",
   type as "Type",
   method as "Via",
-  file.folder as "Folder"
+  domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date >= date(today) - dur(30 day) AND date < date(today) - dur(7 day)
 SORT date DESC
 ```
@@ -77,7 +80,7 @@ GROUP BY type
 /// Resolve the dashboard path from config.
 pub fn dashboard_path(config: &Config) -> PathBuf {
     let root = expand_tilde(&config.vault.root_path);
-    root.join("⚙️ System").join("borg-dashboard.md")
+    root.join("system").join("borg-dashboard.md")
 }
 
 /// Create the Borg Dashboard file if it doesn't exist.
