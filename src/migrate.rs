@@ -140,12 +140,14 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
             && let Some(source) = fm.get("source").and_then(|v| v.as_str())
         {
             let date = fm.get("date").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let rel_note_path = path.strip_prefix(&vault_root).ok().map(|p| p.display().to_string());
             ledger_entries.push(LedgerEntry {
                 date,
                 time: "00:00".to_string(),
                 method: IngestMethod::Cli,
                 status: LedgerStatus::Completed,
                 title: fm.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                path: rel_note_path,
                 source: source.to_string(),
                 domain: path
                     .parent()

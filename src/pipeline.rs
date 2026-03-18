@@ -187,6 +187,7 @@ pub async fn process_url(
                     method,
                     status: LedgerStatus::Failed,
                     title: None,
+                    path: None,
                     source: canonical.clone(),
                     domain: None,
                     trace_id: Some(trace_id.to_string()),
@@ -252,6 +253,7 @@ async fn process_url_inner(
                         method,
                         status: LedgerStatus::Skipped,
                         title: None,
+                        path: None,
                         source: canonical.clone(),
                         domain: None,
                         trace_id: Some(trace_id.to_string()),
@@ -281,6 +283,7 @@ async fn process_url_inner(
                     method,
                     status: LedgerStatus::Skipped,
                     title: None,
+                    path: None,
                     source: canonical.clone(),
                     domain: None,
                     trace_id: Some(trace_id.to_string()),
@@ -434,6 +437,7 @@ async fn process_url_inner(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: canonical.clone(),
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -791,6 +795,7 @@ async fn process_image_inner(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: source_display,
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -1043,6 +1048,7 @@ async fn process_audio_inner(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: source_display,
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -1330,6 +1336,7 @@ async fn process_document_file_inner(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: source_display,
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -1548,6 +1555,7 @@ async fn process_text_inner(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: source_display,
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -1706,6 +1714,7 @@ async fn process_vocab(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: format!("[{}]", text.trim()),
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -2115,6 +2124,7 @@ async fn process_code_snippet(
             method,
             status: LedgerStatus::Completed,
             title: Some(title.clone()),
+            path: vault_relative_path(&note_path, &config.vault.root_path),
             source: source_display,
             domain: Some(domain.clone()),
             trace_id: Some(trace_id.to_string()),
@@ -2197,6 +2207,22 @@ fn build_obsidian_url(vault_name: &str, note_path: &str, vault_root: &str) -> Op
     let encoded_file = urlencoding::encode(rel_path);
 
     Some(format!("obsidian://open?vault={encoded_vault}&file={encoded_file}"))
+}
+
+/// Compute the vault-relative path for a note, for use in the ledger Path column.
+/// Returns something like "notes/some-title.md".
+fn vault_relative_path(note_path: &std::path::Path, vault_root: &str) -> Option<String> {
+    let expanded_root = expand_tilde(vault_root);
+    let root_str = expanded_root.to_string_lossy();
+    let root_prefix = if root_str.ends_with('/') {
+        root_str.to_string()
+    } else {
+        format!("{root_str}/")
+    };
+    note_path
+        .to_string_lossy()
+        .strip_prefix(&root_prefix)
+        .map(|s| s.to_string())
 }
 
 fn expand_tilde(path: &str) -> PathBuf {

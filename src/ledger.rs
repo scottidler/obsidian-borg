@@ -28,6 +28,7 @@ pub struct LedgerEntry {
     pub method: IngestMethod,
     pub status: LedgerStatus,
     pub title: Option<String>,
+    pub path: Option<String>,
     pub source: String,
     pub domain: Option<String>,
     pub trace_id: Option<String>,
@@ -50,8 +51,8 @@ All URLs ingested by obsidian-borg. This file is machine-maintained - do not edi
 
 See also: [[borg-dashboard]]
 
-| Date | Time | Method | Status | Title | Source | Domain | Trace |
-|------|------|--------|--------|-------|--------|--------|-------|
+| Date | Time | Method | Status | Title | Path | Source | Domain | Trace |
+|------|------|--------|--------|-------|------|--------|--------|-------|
 "#;
 
 /// Resolve the Borg Ledger path from config.
@@ -96,12 +97,14 @@ pub fn check_duplicate(ledger_path: &Path, canonical_url: &str) -> Result<Option
             continue;
         }
         let cols: Vec<&str> = line.split('|').collect();
-        // Expected: ["", " Date ", " Time ", " Method ", " Status ", " Title ", " Source ", " Domain ", ""]
+        // New format (9 data cols): ["", Date, Time, Method, Status, Title, Path, Source, Domain, Trace, ""]
+        // Old format (8 data cols): ["", Date, Time, Method, Status, Title, Source, Domain, Trace, ""]
         if cols.len() < 8 {
             continue;
         }
         let status = cols[4].trim();
-        let source = cols[6].trim();
+        // Source is at index 7 (new format, 10+ cols) or index 6 (old format)
+        let source = if cols.len() >= 11 { cols[7].trim() } else { cols[6].trim() };
         if status == "✅" && source == canonical_url {
             return Ok(Some(cols[1].trim().to_string()));
         }
@@ -125,13 +128,22 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
         .title
         .as_ref()
         .map(|t| format!("[[{}]]", t))
-        .unwrap_or_else(|| "—".to_string());
+        .unwrap_or_else(|| "-".to_string());
+    let path_display = entry.path.as_deref().unwrap_or("-");
     let domain_display = entry.domain.as_deref().unwrap_or("-");
     let trace_display = entry.trace_id.as_deref().unwrap_or("-");
 
     let row = format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
-        entry.date, entry.time, entry.method, entry.status, title_display, entry.source, domain_display, trace_display,
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        entry.date,
+        entry.time,
+        entry.method,
+        entry.status,
+        title_display,
+        path_display,
+        entry.source,
+        domain_display,
+        trace_display,
     );
 
     use std::io::Write;
@@ -179,11 +191,13 @@ pub fn parse_completed_entries(ledger_path: &Path) -> Result<Vec<ParsedLedgerRow
             .and_then(|s| s.strip_suffix("]]"))
             .unwrap_or(title_raw)
             .to_string();
+        // Source is at index 7 (new format, 10+ cols) or index 6 (old format)
+        let source = if cols.len() >= 11 { cols[7].trim() } else { cols[6].trim() };
         entries.push(ParsedLedgerRow {
             date: cols[1].trim().to_string(),
             status,
             title,
-            source: cols[6].trim().to_string(),
+            source: source.to_string(),
         });
     }
     Ok(entries)
@@ -267,6 +281,7 @@ mod tests {
             title: Some("Test Article".to_string()),
             source: "https://example.com/article".to_string(),
             domain: Some("inbox".to_string()),
+            path: None,
             trace_id: None,
         };
         append_entry(&path, &entry).expect("append");
@@ -293,6 +308,7 @@ mod tests {
             method: IngestMethod::Telegram,
             status: LedgerStatus::Failed,
             title: None,
+            path: None,
             source: "https://example.com/broken".to_string(),
             domain: None,
             trace_id: None,
@@ -317,6 +333,7 @@ mod tests {
             method: IngestMethod::Clipboard,
             status: LedgerStatus::Skipped,
             title: None,
+            path: None,
             source: "https://example.com/dup".to_string(),
             domain: None,
             trace_id: None,
@@ -348,6 +365,7 @@ mod tests {
             method: IngestMethod::Telegram,
             status: LedgerStatus::Completed,
             title: Some("Test Note".to_string()),
+            path: None,
             source: "https://example.com".to_string(),
             domain: Some("work".to_string()),
             trace_id: Some("tg-7f3a2c".to_string()),
@@ -372,6 +390,7 @@ mod tests {
             method: IngestMethod::Cli,
             status: LedgerStatus::Completed,
             title: Some("Test".to_string()),
+            path: None,
             source: "https://example.com".to_string(),
             domain: None,
             trace_id: None,
@@ -381,6 +400,61 @@ mod tests {
         let content = fs::read_to_string(&path).expect("read");
         // When no trace_id, the column should show "-"
         assert!(content.contains("| - |"), "missing trace should show dash");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_append_entry_with_path() {
+        let path = temp_ledger_path().with_file_name("test-with-path.md");
+        cleanup(&path);
+
+        let entry = LedgerEntry {
+            date: "2026-03-18".to_string(),
+            time: "10:00".to_string(),
+            method: IngestMethod::Cli,
+            status: LedgerStatus::Completed,
+            title: Some("Test Video".to_string()),
+            path: Some("notes/test-video.md".to_string()),
+            source: "https://www.youtube.com/watch?v=abc".to_string(),
+            domain: Some("ai".to_string()),
+            trace_id: Some("cl-abc123".to_string()),
+        };
+        append_entry(&path, &entry).expect("append");
+
+        let content = fs::read_to_string(&path).expect("read");
+        assert!(content.contains("| Path |"), "header should have Path column");
+        assert!(
+            content.contains("notes/test-video.md"),
+            "row should contain vault-relative path"
+        );
+
+        // Dedup should still work with the new format
+        let result = check_duplicate(&path, "https://www.youtube.com/watch?v=abc").expect("check");
+        assert_eq!(result, Some("2026-03-18".to_string()));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_check_duplicate_backward_compat_old_format() {
+        let path = temp_ledger_path().with_file_name("test-old-format.md");
+        cleanup(&path);
+
+        // Write a ledger with the OLD format (no Path column)
+        let old_header = "---\ntitle: Borg Ledger\ndate: 2026-03-01\n---\n\n\
+            | Date | Time | Method | Status | Title | Source | Domain | Trace |\n\
+            |------|------|--------|--------|-------|--------|--------|-------|\n\
+            | 2026-03-01 | 12:00 | cli | \u{2705} | [[Old Note]] | https://example.com/old | ai | cl-111111 |\n";
+        fs::write(&path, old_header).expect("write old format");
+
+        // Should find duplicates in old-format ledger
+        let result = check_duplicate(&path, "https://example.com/old").expect("check");
+        assert_eq!(result, Some("2026-03-01".to_string()));
+
+        // Non-matching should return None
+        let result = check_duplicate(&path, "https://example.com/other").expect("check");
+        assert!(result.is_none());
 
         cleanup(&path);
     }

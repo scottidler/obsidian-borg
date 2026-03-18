@@ -124,7 +124,15 @@ pub fn sanitize_tag(tag: &str) -> String {
 
 /// Valid domain values per system/domain-values.md in the vault.
 const VALID_DOMAINS: &[&str] = &[
-    "ai", "tech", "football", "work", "writing", "music", "spanish", "knowledge", "resources",
+    "ai",
+    "tech",
+    "football",
+    "work",
+    "writing",
+    "music",
+    "spanish",
+    "knowledge",
+    "resources",
     "system",
 ];
 
@@ -193,6 +201,12 @@ pub fn normalize_domain(raw: &str) -> String {
 
     log::warn!("Unknown domain value '{}', passing through as-is", trimmed);
     lower
+}
+
+/// Normalize a text input for use as a content key.
+/// Trims whitespace, collapses internal runs to a single space, lowercases.
+pub fn normalize_text_input(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 pub fn sanitize_filename(title: &str) -> String {
@@ -441,5 +455,37 @@ mod tests {
     fn test_normalize_domain_trimming() {
         assert_eq!(normalize_domain("  ai  "), "ai");
         assert_eq!(normalize_domain(" 🤖 Tech/ai-llm "), "ai");
+    }
+
+    #[test]
+    fn test_normalize_text_input_basic() {
+        assert_eq!(
+            normalize_text_input("  Definition:  Gregarious  "),
+            "definition: gregarious"
+        );
+    }
+
+    #[test]
+    fn test_normalize_text_input_collapse_whitespace() {
+        assert_eq!(
+            normalize_text_input("clarify:  andar   vs   caminar"),
+            "clarify: andar vs caminar"
+        );
+    }
+
+    #[test]
+    fn test_normalize_text_input_lowercase() {
+        assert_eq!(normalize_text_input("Define: HELLO"), "define: hello");
+    }
+
+    #[test]
+    fn test_normalize_text_input_empty() {
+        assert_eq!(normalize_text_input(""), "");
+        assert_eq!(normalize_text_input("   "), "");
+    }
+
+    #[test]
+    fn test_normalize_text_input_tabs_newlines() {
+        assert_eq!(normalize_text_input("define:\t\tword\n\n"), "define: word");
     }
 }
