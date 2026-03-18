@@ -2671,12 +2671,12 @@ int main() {
     fn test_build_obsidian_url_simple() {
         let url = build_obsidian_url(
             "obsidian",
-            "/home/user/obsidian/Inbox/my-note.md",
+            "/home/user/obsidian/inbox/my-note.md",
             "/home/user/obsidian/",
         );
         assert_eq!(
             url,
-            Some("obsidian://open?vault=obsidian&file=Inbox%2Fmy-note.md".to_string())
+            Some("obsidian://open?vault=obsidian&file=inbox%2Fmy-note.md".to_string())
         );
     }
 
@@ -2684,12 +2684,12 @@ int main() {
     fn test_build_obsidian_url_no_trailing_slash() {
         let url = build_obsidian_url(
             "obsidian",
-            "/home/user/obsidian/Inbox/my-note.md",
+            "/home/user/obsidian/inbox/my-note.md",
             "/home/user/obsidian",
         );
         assert_eq!(
             url,
-            Some("obsidian://open?vault=obsidian&file=Inbox%2Fmy-note.md".to_string())
+            Some("obsidian://open?vault=obsidian&file=inbox%2Fmy-note.md".to_string())
         );
     }
 
