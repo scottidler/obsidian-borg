@@ -43,8 +43,16 @@ use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
 use config::Config;
+use notify::Notifier;
 
-pub fn build_router(config: Arc<Config>) -> Router {
+/// Shared application state for the HTTP server and daemon tasks.
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Arc<Config>,
+    pub notifier: Option<Notifier>,
+}
+
+pub fn build_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
@@ -56,7 +64,7 @@ pub fn build_router(config: Arc<Config>) -> Router {
         .route("/ingest/file", post(routes::ingest_multipart))
         .route("/note", post(routes::note))
         .layer(cors)
-        .with_state(config)
+        .with_state(state)
 }
 
 pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
@@ -83,8 +91,32 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
     let config = Arc::new(config);
     let mut tasks = tokio::task::JoinSet::new();
 
+    // Build the shared Telegram notifier (if configured)
+    let mut notifier: Option<Notifier> = None;
+    let mut resolved_tg_token: Option<String> = None;
+
+    if let Some(tg_config) = &config.telegram {
+        match config::resolve_secret(&tg_config.bot_token) {
+            Ok(token) => {
+                notifier = Notifier::new(&token, tg_config);
+                resolved_tg_token = Some(token);
+                if notifier.is_some() {
+                    println!("{} telegram notifier active", "-->".green());
+                }
+            }
+            Err(e) => {
+                log::warn!("Telegram configured but token not available: {e:#}");
+                eprintln!("{} telegram notifier skipped (token not available)", "-->".yellow());
+            }
+        }
+    }
+
     // HTTP server (always runs)
-    let app = build_router(config.clone());
+    let state = AppState {
+        config: config.clone(),
+        notifier: notifier.clone(),
+    };
+    let app = build_router(state);
     let listener = TcpListener::bind(addr).await.context("Failed to bind to address")?;
     tasks.spawn(async move { axum::serve(listener, app).await.map_err(|e| eyre::eyre!(e)) });
     log::info!("HTTP server listening on {addr}");
@@ -98,23 +130,18 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
                 tg_config.host
             );
             eprintln!("{} telegram bot skipped (host mismatch)", "-->".yellow());
+        } else if let Some(token) = resolved_tg_token.clone() {
+            log::info!(
+                "Telegram bot enabled (allowed_chat_ids: {:?})",
+                tg_config.allowed_chat_ids
+            );
+            let tg = tg_config.clone();
+            let cfg = config.clone();
+            let tg_notifier = notifier.clone();
+            tasks.spawn(async move { telegram::run(token, tg, cfg, tg_notifier).await });
+            println!("{} telegram bot active", "-->".green());
         } else {
-            match config::resolve_secret(&tg_config.bot_token) {
-                Ok(token) => {
-                    log::info!(
-                        "Telegram bot enabled (allowed_chat_ids: {:?})",
-                        tg_config.allowed_chat_ids
-                    );
-                    let tg = tg_config.clone();
-                    let cfg = config.clone();
-                    tasks.spawn(async move { telegram::run(token, tg, cfg).await });
-                    println!("{} telegram bot active", "-->".green());
-                }
-                Err(e) => {
-                    log::warn!("Telegram configured but token not available: {e:#}");
-                    eprintln!("{} telegram bot skipped (token not available)", "-->".yellow());
-                }
-            }
+            eprintln!("{} telegram bot skipped (token not available)", "-->".yellow());
         }
     }
 
@@ -1078,7 +1105,10 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_router() -> Router {
-        build_router(Arc::new(Config::default()))
+        build_router(AppState {
+            config: Arc::new(Config::default()),
+            notifier: None,
+        })
     }
 
     #[tokio::test]

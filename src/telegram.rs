@@ -93,7 +93,12 @@ async fn claim_polling_session(bot: &Bot) {
 
 // html_escape and format_telegram_reply moved to notify module
 
-pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) -> Result<()> {
+pub async fn run(
+    token: String,
+    tg_config: TelegramConfig,
+    config: Arc<Config>,
+    notifier: Option<notify::Notifier>,
+) -> Result<()> {
     let mut backoff = ExponentialBackoff::new();
 
     loop {
@@ -120,16 +125,19 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
 
         let tg = tg_config.clone();
         let cfg = config.clone();
+        let nfy = notifier.clone();
 
         let handler = Update::filter_message().endpoint(move |message: Message, bot: Bot| {
             let config = cfg.clone();
             let allowed = tg.allowed_chat_ids.clone();
+            let notifier = nfy.clone();
             async move {
                 if !allowed.is_empty() && !allowed.contains(&message.chat.id.0) {
                     return Ok::<(), teloxide::RequestError>(());
                 }
 
                 let chat_id = message.chat.id;
+                let chat_id_override = Some(chat_id.0);
 
                 // Priority 1: Photo attachment
                 if let Some(photos) = message.photo() {
@@ -158,14 +166,15 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     let display_source = format!("[image: {}]", filename);
                     let trace_id = trace::generate(IngestMethod::Telegram);
 
-                    bot.send_message(chat_id, format!("[{trace_id}] Processing image..."))
-                        .await?;
+                    if let Some(ref n) = notifier {
+                        let _ = n.processing(&trace_id, "Processing image...", chat_id_override).await;
+                    }
 
                     let content = ContentKind::Image { data, filename };
                     let extra_tags: Vec<String> =
                         if caption.is_empty() { vec![] } else { vec![format!("caption:{caption}")] };
 
-                    let bot_clone = bot.clone();
+                    let n = notifier.clone();
                     tokio::spawn(async move {
                         let result = pipeline::process_content(
                             content,
@@ -177,13 +186,8 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                         )
                         .await;
                         log::debug!("Pipeline result: {:?}", result.status);
-                        let reply = notify::format_telegram_reply(&result, &display_source);
-                        if let Err(e) = bot_clone
-                            .send_message(chat_id, reply)
-                            .parse_mode(teloxide::types::ParseMode::Html)
-                            .await
-                        {
-                            log::error!("Failed to send Telegram reply: {e}");
+                        if let Some(n) = n {
+                            n.result(&result, &display_source, chat_id_override).await;
                         }
                     });
 
@@ -212,12 +216,15 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     let display_source = format!("[voice: {}]", filename);
                     let trace_id = trace::generate(IngestMethod::Telegram);
 
-                    bot.send_message(chat_id, format!("[{trace_id}] Processing voice note..."))
-                        .await?;
+                    if let Some(ref n) = notifier {
+                        let _ = n
+                            .processing(&trace_id, "Processing voice note...", chat_id_override)
+                            .await;
+                    }
 
                     let content = ContentKind::Audio { data, filename };
 
-                    let bot_clone = bot.clone();
+                    let n = notifier.clone();
                     tokio::spawn(async move {
                         let result = pipeline::process_content(
                             content,
@@ -229,13 +236,8 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                         )
                         .await;
                         log::debug!("Pipeline result: {:?}", result.status);
-                        let reply = notify::format_telegram_reply(&result, &display_source);
-                        if let Err(e) = bot_clone
-                            .send_message(chat_id, reply)
-                            .parse_mode(teloxide::types::ParseMode::Html)
-                            .await
-                        {
-                            log::error!("Failed to send Telegram reply: {e}");
+                        if let Some(n) = n {
+                            n.result(&result, &display_source, chat_id_override).await;
                         }
                     });
 
@@ -264,15 +266,16 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     let display_source = format!("[audio: {}]", original_name);
                     let trace_id = trace::generate(IngestMethod::Telegram);
 
-                    bot.send_message(chat_id, format!("[{trace_id}] Processing audio..."))
-                        .await?;
+                    if let Some(ref n) = notifier {
+                        let _ = n.processing(&trace_id, "Processing audio...", chat_id_override).await;
+                    }
 
                     let content = ContentKind::Audio {
                         data,
                         filename: original_name,
                     };
 
-                    let bot_clone = bot.clone();
+                    let n = notifier.clone();
                     tokio::spawn(async move {
                         let result = pipeline::process_content(
                             content,
@@ -284,13 +287,8 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                         )
                         .await;
                         log::debug!("Pipeline result: {:?}", result.status);
-                        let reply = notify::format_telegram_reply(&result, &display_source);
-                        if let Err(e) = bot_clone
-                            .send_message(chat_id, reply)
-                            .parse_mode(teloxide::types::ParseMode::Html)
-                            .await
-                        {
-                            log::error!("Failed to send Telegram reply: {e}");
+                        if let Some(n) = n {
+                            n.result(&result, &display_source, chat_id_override).await;
                         }
                     });
 
@@ -335,10 +333,13 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                                 if caption.is_empty() { vec![] } else { vec![format!("caption:{caption}")] };
                             let trace_id = trace::generate(IngestMethod::Telegram);
 
-                            bot.send_message(chat_id, format!("[{trace_id}] Processing {kind_label}..."))
-                                .await?;
+                            if let Some(ref n) = notifier {
+                                let _ = n
+                                    .processing(&trace_id, &format!("Processing {kind_label}..."), chat_id_override)
+                                    .await;
+                            }
 
-                            let bot_clone = bot.clone();
+                            let n = notifier.clone();
                             tokio::spawn(async move {
                                 let result = pipeline::process_content(
                                     kind,
@@ -350,13 +351,8 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                                 )
                                 .await;
                                 log::debug!("Pipeline result: {:?}", result.status);
-                                let reply = notify::format_telegram_reply(&result, &display_source);
-                                if let Err(e) = bot_clone
-                                    .send_message(chat_id, reply)
-                                    .parse_mode(teloxide::types::ParseMode::Html)
-                                    .await
-                                {
-                                    log::error!("Failed to send Telegram reply: {e}");
+                                if let Some(n) = n {
+                                    n.result(&result, &display_source, chat_id_override).await;
                                 }
                             });
                         }
@@ -398,9 +394,11 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                 };
 
                 let trace_id = trace::generate(IngestMethod::Telegram);
-                bot.send_message(chat_id, format!("[{trace_id}] Processing...")).await?;
+                if let Some(ref n) = notifier {
+                    let _ = n.processing(&trace_id, "Processing...", chat_id_override).await;
+                }
 
-                let bot_clone = bot.clone();
+                let n = notifier.clone();
                 tokio::spawn(async move {
                     let result = pipeline::process_content(
                         content,
@@ -412,13 +410,8 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
                     )
                     .await;
                     log::debug!("Pipeline result: {:?}", result.status);
-                    let reply = notify::format_telegram_reply(&result, &display_source);
-                    if let Err(e) = bot_clone
-                        .send_message(chat_id, reply)
-                        .parse_mode(teloxide::types::ParseMode::Html)
-                        .await
-                    {
-                        log::error!("Failed to send Telegram reply: {e}");
+                    if let Some(n) = n {
+                        n.result(&result, &display_source, chat_id_override).await;
                     }
                 });
 
@@ -447,5 +440,3 @@ pub async fn run(token: String, tg_config: TelegramConfig, config: Arc<Config>) 
         backoff.wait().await;
     }
 }
-
-// Tests for html_escape and format_telegram_reply moved to notify module
