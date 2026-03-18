@@ -122,6 +122,79 @@ pub fn sanitize_tag(tag: &str) -> String {
         .to_string()
 }
 
+/// Valid domain values per system/domain-values.md in the vault.
+const VALID_DOMAINS: &[&str] = &[
+    "ai", "tech", "football", "work", "writing", "music", "spanish", "knowledge", "resources",
+    "system",
+];
+
+/// Legacy folder-to-domain mapping for backward compat with old Fabric patterns
+/// and any other code that might emit the old emoji folder paths.
+const DOMAIN_ALIASES: &[(&str, &str)] = &[
+    ("🤖 Tech/ai-llm", "ai"),
+    ("🤖 tech/ai-llm", "ai"),
+    ("tech/ai-llm", "ai"),
+    ("ai-llm", "ai"),
+    ("🤖 Tech/rust", "tech"),
+    ("🤖 Tech/nixos", "tech"),
+    ("🤖 Tech/python", "tech"),
+    ("🤖 Tech/tools", "tech"),
+    ("🤖 Tech/devops", "tech"),
+    ("🤖 Tech/snippets", "tech"),
+    ("🤖 tech", "tech"),
+    ("🏈 Football/research", "football"),
+    ("🏈 Football", "football"),
+    ("✍️ Writing/craft", "writing"),
+    ("✍️ Writing", "writing"),
+    ("💼 Work", "work"),
+    ("📚 Resources/articles", "resources"),
+    ("📚 Resources/videos", "resources"),
+    ("📚 Resources", "resources"),
+    ("🧠 Knowledge/health", "knowledge"),
+    ("🧠 Knowledge/learning", "knowledge"),
+    ("🧠 Knowledge", "knowledge"),
+    ("🎵 Music", "music"),
+    ("🇪🇸 Spanish", "spanish"),
+    ("⚙️ System", "system"),
+    ("📥 Inbox", "inbox"),
+    ("Inbox", "inbox"),
+];
+
+/// Normalize a domain value to the canonical v2 format.
+///
+/// Handles:
+/// - Old emoji folder paths (e.g. "🤖 Tech/ai-llm" -> "ai")
+/// - Case normalization (e.g. "AI" -> "ai")
+/// - Already-valid values pass through
+/// - Unknown values log a warning and pass through lowercased
+pub fn normalize_domain(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    // Check exact alias match first (handles emoji paths)
+    for &(alias, domain) in DOMAIN_ALIASES {
+        if trimmed == alias {
+            return domain.to_string();
+        }
+    }
+
+    // Lowercase and check if it's already a valid domain
+    let lower = trimmed.to_lowercase();
+    if VALID_DOMAINS.contains(&lower.as_str()) {
+        return lower;
+    }
+
+    // Try case-insensitive alias match
+    let trimmed_lower = trimmed.to_lowercase();
+    for &(alias, domain) in DOMAIN_ALIASES {
+        if trimmed_lower == alias.to_lowercase() {
+            return domain.to_string();
+        }
+    }
+
+    log::warn!("Unknown domain value '{}', passing through as-is", trimmed);
+    lower
+}
+
 pub fn sanitize_filename(title: &str) -> String {
     let sanitized: String = title
         .to_lowercase()
@@ -332,5 +405,41 @@ mod tests {
     #[test]
     fn test_sanitize_filename_collapses_spaces() {
         assert_eq!(sanitize_filename("a:::b"), "a-b");
+    }
+
+    #[test]
+    fn test_normalize_domain_valid_passthrough() {
+        assert_eq!(normalize_domain("ai"), "ai");
+        assert_eq!(normalize_domain("tech"), "tech");
+        assert_eq!(normalize_domain("football"), "football");
+        assert_eq!(normalize_domain("resources"), "resources");
+    }
+
+    #[test]
+    fn test_normalize_domain_emoji_folders() {
+        assert_eq!(normalize_domain("🤖 Tech/ai-llm"), "ai");
+        assert_eq!(normalize_domain("🤖 Tech/rust"), "tech");
+        assert_eq!(normalize_domain("🤖 Tech/tools"), "tech");
+        assert_eq!(normalize_domain("🏈 Football/research"), "football");
+        assert_eq!(normalize_domain("✍️ Writing/craft"), "writing");
+        assert_eq!(normalize_domain("💼 Work"), "work");
+        assert_eq!(normalize_domain("📚 Resources/articles"), "resources");
+        assert_eq!(normalize_domain("🧠 Knowledge/health"), "knowledge");
+        assert_eq!(normalize_domain("🎵 Music"), "music");
+        assert_eq!(normalize_domain("🇪🇸 Spanish"), "spanish");
+        assert_eq!(normalize_domain("⚙️ System"), "system");
+    }
+
+    #[test]
+    fn test_normalize_domain_case_insensitive() {
+        assert_eq!(normalize_domain("AI"), "ai");
+        assert_eq!(normalize_domain("Tech"), "tech");
+        assert_eq!(normalize_domain("FOOTBALL"), "football");
+    }
+
+    #[test]
+    fn test_normalize_domain_trimming() {
+        assert_eq!(normalize_domain("  ai  "), "ai");
+        assert_eq!(normalize_domain(" 🤖 Tech/ai-llm "), "ai");
     }
 }

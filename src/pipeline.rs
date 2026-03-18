@@ -352,7 +352,7 @@ async fn process_url_inner(
 
     // Resolve destination domain (3-tier routing)
     // If title is still "Unknown" after all extraction attempts, force fallback to inbox
-    let domain = if title == "Unknown" || title.is_empty() {
+    let domain = hygiene::normalize_domain(&if title == "Unknown" || title.is_empty() {
         log::warn!("Title is '{title}', forcing fallback to inbox");
         config.routing.fallback_domain.clone()
     } else if !url_match.domain.is_empty() {
@@ -390,7 +390,7 @@ async fn process_url_inner(
         // Tier 3: Fallback
         log::debug!("Tier 3 routing: fallback -> {}", config.routing.fallback_domain);
         config.routing.fallback_domain.clone()
-    };
+    });
 
     // Generate embed code for YouTube
     let embed_code = if url_match.is_youtube_type() {
@@ -715,7 +715,7 @@ async fn process_image_inner(
         format!("Image: {}", title)
     };
 
-    let domain = if use_fabric {
+    let domain = hygiene::normalize_domain(&if use_fabric {
         match fabric::classify_topic(&title, &summary_text, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
@@ -732,7 +732,7 @@ async fn process_image_inner(
         }
     } else {
         config.routing.fallback_domain.clone()
-    };
+    });
 
     // Build summary: include vision description and extracted text
     let summary = {
@@ -975,7 +975,7 @@ async fn process_audio_inner(
         format!("Audio: {}", title)
     };
 
-    let domain = if use_fabric {
+    let domain = hygiene::normalize_domain(&if use_fabric {
         match fabric::classify_topic(&title, &summary_text, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
@@ -992,7 +992,7 @@ async fn process_audio_inner(
         }
     } else {
         config.routing.fallback_domain.clone()
-    };
+    });
 
     // Build summary
     let summary = if !transcript_text.is_empty() {
@@ -1267,7 +1267,7 @@ async fn process_document_file_inner(
         format!("{}: {}", kind.label(), title)
     };
 
-    let domain = if use_fabric {
+    let domain = hygiene::normalize_domain(&if use_fabric {
         match fabric::classify_topic(&title, &summary_for_classify, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
@@ -1285,7 +1285,7 @@ async fn process_document_file_inner(
         }
     } else {
         config.routing.fallback_domain.clone()
-    };
+    });
 
     let note = NoteContent {
         title: title.clone(),
@@ -1487,7 +1487,7 @@ async fn process_text_inner(
     all_tags.dedup();
 
     // Route via LLM classification
-    let domain = if use_fabric {
+    let domain = hygiene::normalize_domain(&if use_fabric {
         match fabric::classify_topic(&title, text, &config.fabric).await {
             Ok(result) if result.confidence >= config.routing.confidence_threshold => {
                 log::info!(
@@ -1504,7 +1504,7 @@ async fn process_text_inner(
         }
     } else {
         config.routing.fallback_domain.clone()
-    };
+    });
 
     let note = NoteContent {
         title: title.clone(),
