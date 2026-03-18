@@ -10,6 +10,7 @@ pub enum LedgerStatus {
     Completed,
     Failed,
     Skipped,
+    Replaced,
 }
 
 impl std::fmt::Display for LedgerStatus {
@@ -18,6 +19,7 @@ impl std::fmt::Display for LedgerStatus {
             Self::Completed => write!(f, "✅"),
             Self::Failed => write!(f, "❌"),
             Self::Skipped => write!(f, "⏭️"),
+            Self::Replaced => write!(f, "🔄"),
         }
     }
 }
@@ -111,6 +113,90 @@ pub fn check_duplicate(ledger_path: &Path, canonical_url: &str) -> Result<Option
     }
 
     Ok(None)
+}
+
+/// Result from finding a completed entry for a content key.
+#[derive(Debug)]
+pub struct CompletedEntry {
+    pub date: String,
+    pub path: String,
+    pub line_number: usize,
+}
+
+/// Find the most recent completed entry for a content key (canonical URL or normalized text).
+/// Returns the vault-relative path and line number for replacement.
+pub fn find_completed(ledger_path: &Path, content_key: &str) -> Result<Option<CompletedEntry>> {
+    if !ledger_path.exists() {
+        return Ok(None);
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .open(ledger_path)
+        .context("Failed to open Borg Ledger for reading")?;
+    file.lock_shared()
+        .context("Failed to acquire shared lock on Borg Ledger")?;
+
+    let content = fs::read_to_string(ledger_path).context("Failed to read Borg Ledger")?;
+    file.unlock().ok();
+
+    let mut last_match: Option<CompletedEntry> = None;
+
+    for (line_number, line) in content.lines().enumerate() {
+        if !line.starts_with('|') || line.starts_with("| Date") || line.starts_with("|--") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('|').collect();
+        if cols.len() < 8 {
+            continue;
+        }
+        let status = cols[4].trim();
+        // New format (11+ cols): source at index 7, path at index 6
+        // Old format (10 cols): source at index 6, no path
+        let (source, path) = if cols.len() >= 11 {
+            (cols[7].trim(), cols[6].trim().to_string())
+        } else {
+            (cols[6].trim(), "-".to_string())
+        };
+        if status == "✅" && source == content_key {
+            last_match = Some(CompletedEntry {
+                date: cols[1].trim().to_string(),
+                path,
+                line_number,
+            });
+        }
+    }
+
+    Ok(last_match)
+}
+
+/// Mark an existing ledger row as replaced (✅ -> 🔄).
+/// Reads the entire file, replaces the status in the target line, and writes back.
+pub fn mark_replaced(ledger_path: &Path, line_number: usize) -> Result<()> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(ledger_path)
+        .context("Failed to open Borg Ledger for update")?;
+    file.lock_exclusive()
+        .context("Failed to acquire exclusive lock on Borg Ledger")?;
+
+    let content = fs::read_to_string(ledger_path).context("Failed to read Borg Ledger")?;
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    if line_number < lines.len() {
+        // Replace the first ✅ in the line with 🔄
+        lines[line_number] = lines[line_number].replacen("✅", "🔄", 1);
+    }
+
+    let new_content = lines.join("\n");
+    // Preserve trailing newline if original had one
+    let final_content = if content.ends_with('\n') { format!("{new_content}\n") } else { new_content };
+
+    fs::write(ledger_path, final_content).context("Failed to write updated Borg Ledger")?;
+    file.unlock().ok();
+
+    Ok(())
 }
 
 /// Append a row to the Borg Ledger table.
@@ -457,5 +543,82 @@ mod tests {
         assert!(result.is_none());
 
         cleanup(&path);
+    }
+
+    #[test]
+    fn test_find_completed_returns_path() {
+        let path = temp_ledger_path().with_file_name("test-find-completed.md");
+        cleanup(&path);
+
+        let entry = LedgerEntry {
+            date: "2026-03-18".to_string(),
+            time: "10:00".to_string(),
+            method: IngestMethod::Cli,
+            status: LedgerStatus::Completed,
+            title: Some("Test Note".to_string()),
+            path: Some("notes/test-note.md".to_string()),
+            source: "https://example.com/article".to_string(),
+            domain: Some("ai".to_string()),
+            trace_id: None,
+        };
+        append_entry(&path, &entry).expect("append");
+
+        let result = find_completed(&path, "https://example.com/article").expect("find");
+        assert!(result.is_some());
+        let entry = result.expect("should have entry");
+        assert_eq!(entry.date, "2026-03-18");
+        assert_eq!(entry.path, "notes/test-note.md");
+
+        // Non-matching key should return None
+        let result = find_completed(&path, "https://example.com/other").expect("find");
+        assert!(result.is_none());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_mark_replaced_changes_status() {
+        let path = temp_ledger_path().with_file_name("test-mark-replaced.md");
+        cleanup(&path);
+
+        let entry = LedgerEntry {
+            date: "2026-03-18".to_string(),
+            time: "10:00".to_string(),
+            method: IngestMethod::Cli,
+            status: LedgerStatus::Completed,
+            title: Some("Test Note".to_string()),
+            path: Some("notes/test-note.md".to_string()),
+            source: "https://example.com/article".to_string(),
+            domain: Some("ai".to_string()),
+            trace_id: None,
+        };
+        append_entry(&path, &entry).expect("append");
+
+        // Find the entry and get its line number
+        let existing = find_completed(&path, "https://example.com/article")
+            .expect("find")
+            .expect("should exist");
+
+        // Mark it as replaced
+        mark_replaced(&path, existing.line_number).expect("mark");
+
+        // Now check_duplicate should NOT find it (only ✅ counts)
+        let result = check_duplicate(&path, "https://example.com/article").expect("check");
+        assert!(result.is_none(), "replaced entry should not count as duplicate");
+
+        // find_completed should also NOT find it
+        let result = find_completed(&path, "https://example.com/article").expect("find");
+        assert!(result.is_none(), "replaced entry should not be found");
+
+        // Verify the file contains 🔄
+        let content = fs::read_to_string(&path).expect("read");
+        assert!(content.contains("🔄"), "row should have replaced status");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_replaced_status_display() {
+        assert_eq!(format!("{}", LedgerStatus::Replaced), "🔄");
     }
 }

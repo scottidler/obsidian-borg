@@ -271,30 +271,23 @@ async fn process_url_inner(
             inflight.insert(canonical.clone());
         }
 
-        // Then check ledger (durable dedup)
-        if let Some(original_date) = ledger::check_duplicate(&ledger_file, &canonical)? {
-            INFLIGHT.lock().await.remove(&canonical);
-            log::info!("[{trace_id}] Duplicate URL: {canonical} (first ingested {original_date})");
-            ledger::append_entry(
-                &ledger_file,
-                &LedgerEntry {
-                    date: log_date,
-                    time: log_time,
-                    method,
-                    status: LedgerStatus::Skipped,
-                    title: None,
-                    path: None,
-                    source: canonical.clone(),
-                    domain: None,
-                    trace_id: Some(trace_id.to_string()),
-                },
-            )?;
-            return Ok(IngestResult {
-                status: IngestStatus::Duplicate { original_date },
-                method: Some(method),
-                canonical_url: Some(canonical),
-                ..Default::default()
-            });
+        // Then check ledger (durable dedup) - replace-on-match semantics
+        if let Some(existing) = ledger::find_completed(&ledger_file, &canonical)? {
+            log::info!(
+                "[{trace_id}] Found existing entry for {canonical} (ingested {}), replacing",
+                existing.date
+            );
+            // Delete old note file if path is known
+            if existing.path != "-" {
+                let old_path = expand_tilde(&config.vault.root_path).join(&existing.path);
+                if old_path.exists() {
+                    std::fs::remove_file(&old_path).context("Failed to delete old note during reingest")?;
+                    log::info!("[{trace_id}] Deleted old note: {}", old_path.display());
+                }
+            }
+            // Mark old ledger entry as replaced
+            ledger::mark_replaced(&ledger_file, existing.line_number)?;
+            log::info!("[{trace_id}] Marked ledger row {} as replaced", existing.line_number);
         }
     }
 
