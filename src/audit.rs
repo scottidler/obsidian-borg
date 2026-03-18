@@ -28,6 +28,10 @@ pub enum AuditFinding {
         source: String,
         note_paths: Vec<PathBuf>,
     },
+    OrphanedReplacement {
+        source: String,
+        replaced_date: String,
+    },
 }
 
 impl std::fmt::Display for AuditFinding {
@@ -50,6 +54,12 @@ impl std::fmt::Display for AuditFinding {
             }
             AuditFinding::DuplicateNotes { source, note_paths } => {
                 write!(f, "[DUPLICATE] {source} -> {} notes found", note_paths.len())
+            }
+            AuditFinding::OrphanedReplacement { source, replaced_date } => {
+                write!(
+                    f,
+                    "[ORPHAN-REPLACE] {source} -> marked replaced on {replaced_date} but no replacement ✅ exists"
+                )
             }
         }
     }
@@ -118,7 +128,41 @@ pub async fn run_audit(config: &Config, fix: bool) -> Result<()> {
         }
     }
 
-    // 3. Duplicate notes (multiple notes with same source URL)
+    // 3. Orphaned replacements (🔄 entries with no corresponding ✅)
+    {
+        let content = std::fs::read_to_string(&ledger_path).context("Failed to read Borg Ledger for orphan check")?;
+        let mut replaced_sources: Vec<(String, String)> = Vec::new(); // (source, date)
+        let mut completed_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for line in content.lines() {
+            if !line.starts_with('|') || line.starts_with("| Date") || line.starts_with("|--") {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('|').collect();
+            if cols.len() < 8 {
+                continue;
+            }
+            let status = cols[4].trim();
+            let source = if cols.len() >= 11 { cols[7].trim() } else { cols[6].trim() };
+
+            if status == "✅" {
+                completed_sources.insert(source.to_string());
+            } else if status == "🔄" {
+                replaced_sources.push((source.to_string(), cols[1].trim().to_string()));
+            }
+        }
+
+        for (source, date) in &replaced_sources {
+            if !completed_sources.contains(source) {
+                findings.push(AuditFinding::OrphanedReplacement {
+                    source: source.clone(),
+                    replaced_date: date.clone(),
+                });
+            }
+        }
+    }
+
+    // 4. Duplicate notes (multiple notes with same source URL)
     for (source, paths) in &note_index {
         if paths.len() > 1 {
             findings.push(AuditFinding::DuplicateNotes {
@@ -139,6 +183,7 @@ pub async fn run_audit(config: &Config, fix: bool) -> Result<()> {
     let mut blocked_count = 0;
     let mut raw_title_count = 0;
     let mut duplicate_count = 0;
+    let mut orphan_count = 0;
 
     for finding in &findings {
         match finding {
@@ -146,6 +191,7 @@ pub async fn run_audit(config: &Config, fix: bool) -> Result<()> {
             AuditFinding::BlockedContent { .. } => blocked_count += 1,
             AuditFinding::RawUrlTitle { .. } => raw_title_count += 1,
             AuditFinding::DuplicateNotes { .. } => duplicate_count += 1,
+            AuditFinding::OrphanedReplacement { .. } => orphan_count += 1,
         }
     }
 
@@ -161,6 +207,9 @@ pub async fn run_audit(config: &Config, fix: bool) -> Result<()> {
     }
     if duplicate_count > 0 {
         println!("  {duplicate_count} duplicate note pairs");
+    }
+    if orphan_count > 0 {
+        println!("  {orphan_count} orphaned replacements (replaced but no new ✅)");
     }
 
     println!("\nDetails:");
@@ -425,5 +474,17 @@ mod tests {
         assert!(content.contains("title: \"Test\""));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_audit_finding_display_orphaned_replacement() {
+        let finding = AuditFinding::OrphanedReplacement {
+            source: "https://example.com/video".to_string(),
+            replaced_date: "2026-03-18".to_string(),
+        };
+        let display = format!("{finding}");
+        assert!(display.contains("[ORPHAN-REPLACE]"));
+        assert!(display.contains("2026-03-18"));
+        assert!(display.contains("no replacement"));
     }
 }
