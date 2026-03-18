@@ -38,7 +38,7 @@ title: Borg Ledger
 date: {date}
 type: system
 domain: system
-origin: human
+origin: authored
 tags:
   - obsidian-borg
   - system

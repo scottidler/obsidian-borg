@@ -181,7 +181,6 @@ pub struct Config {
     pub text_capture: TextCaptureConfig,
     pub vision: VisionConfig,
     pub log_level: Option<String>,
-    pub debug: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -204,6 +203,7 @@ impl Default for VisionConfig {
 #[serde(default, rename_all = "kebab-case")]
 pub struct MigrationConfig {
     pub field_renames: std::collections::HashMap<String, String>,
+    pub value_renames: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     pub field_transforms: std::collections::HashMap<String, String>,
     pub title_fallback: bool,
     pub seed_borg_log: bool,
@@ -540,7 +540,6 @@ mod tests {
         assert_eq!(config.transcriber.url, "http://localhost:8090");
         assert_eq!(config.groq.model, "whisper-large-v3");
         assert_eq!(config.llm.provider, "claude");
-        assert!(!config.debug);
     }
 
     #[test]
@@ -559,7 +558,7 @@ groq:
 llm:
   provider: "ollama"
   model: "llama3"
-debug: true
+log-level: debug
 "#;
         let config: Config = serde_yaml::from_str(yaml).expect("should parse");
         assert_eq!(config.server.host, "127.0.0.1");
@@ -569,7 +568,7 @@ debug: true
         assert_eq!(config.transcriber.timeout_secs, 60);
         assert_eq!(config.groq.model, "whisper-large-v3-turbo");
         assert_eq!(config.llm.provider, "ollama");
-        assert!(config.debug);
+        assert_eq!(config.log_level.as_deref(), Some("debug"));
     }
 
     #[test]

@@ -48,7 +48,17 @@ pub async fn run_migrate(config: &Config, apply: bool) -> Result<()> {
             }
         }
 
-        // 2. Field transforms
+        // 2. Value renames
+        for (field, renames) in &migration.value_renames {
+            if let Some(val) = fm.get(field).and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                if let Some(new_val) = renames.get(&val) {
+                    fm.insert(field.clone(), serde_yaml::Value::String(new_val.clone()));
+                    changed = true;
+                }
+            }
+        }
+
+        // 3. Field transforms
         for (field, transform) in &migration.field_transforms {
             if let Some(val) = fm.get(field) {
                 match transform.as_str() {

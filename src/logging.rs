@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 const APP_NAME: &str = "obsidian-borg";
 
-/// Resolve log level from: CLI flag > RUST_LOG env > config file > "info"
+/// Resolve log level from: CLI flag > LOG_LEVEL env > config file > "info"
 pub fn resolve_log_level(cli_level: Option<&str>, config_level: Option<&str>) -> String {
     if let Some(level) = cli_level {
         return level.to_string();
     }
-    if let Ok(level) = std::env::var("RUST_LOG") {
+    if let Ok(level) = std::env::var("LOG_LEVEL") {
         return level;
     }
     if let Some(level) = config_level {
