@@ -1,7 +1,9 @@
 use crate::backoff::ExponentialBackoff;
 use crate::config::Config;
+use crate::notify::Notifier;
 use crate::pipeline;
 use crate::router::extract_url_from_text;
+use crate::trace;
 use crate::types::{ContentKind, IngestMethod};
 use eyre::Result;
 use serde::Deserialize;
@@ -65,7 +67,13 @@ fn parse_message(message: &str) -> Option<ParsedMessage> {
     }
 }
 
-pub async fn run(server: String, topic: String, token: Option<String>, config: Arc<Config>) -> Result<()> {
+pub async fn run(
+    server: String,
+    topic: String,
+    token: Option<String>,
+    config: Arc<Config>,
+    notifier: Option<Notifier>,
+) -> Result<()> {
     let mut last_event_id: Option<String> = None;
     let mut backoff = ExponentialBackoff::new();
 
@@ -133,21 +141,41 @@ pub async fn run(server: String, topic: String, token: Option<String>, config: A
                 ParsedMessage::Url { url, tags, force } => {
                     log::info!("ntfy: processing URL {url}");
                     let cfg = config.clone();
+                    let n = notifier.clone();
+                    let trace_id = trace::generate(IngestMethod::Ntfy);
+                    if let Some(ref n) = notifier {
+                        let _ = n.processing(&trace_id, "Processing...", None).await;
+                    }
                     tokio::spawn(async move {
+                        let display_source = url.clone();
                         let content = ContentKind::Url(url.clone());
                         let result =
-                            pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg, None).await;
+                            pipeline::process_content(content, tags, IngestMethod::Ntfy, force, &cfg, Some(trace_id))
+                                .await;
                         log::info!("ntfy: pipeline result for {url}: {:?}", result.status);
+                        if let Some(n) = n {
+                            n.result(&result, &display_source, None).await;
+                        }
                     });
                 }
                 ParsedMessage::Text(text) => {
                     log::info!("ntfy: processing text capture ({} chars)", text.len());
                     let cfg = config.clone();
+                    let n = notifier.clone();
+                    let trace_id = trace::generate(IngestMethod::Ntfy);
+                    let display = if text.len() > 50 { format!("{}...", &text[..50]) } else { text.clone() };
+                    if let Some(ref n) = notifier {
+                        let _ = n.processing(&trace_id, "Processing text...", None).await;
+                    }
                     tokio::spawn(async move {
                         let content = ContentKind::Text(text);
                         let result =
-                            pipeline::process_content(content, vec![], IngestMethod::Ntfy, false, &cfg, None).await;
+                            pipeline::process_content(content, vec![], IngestMethod::Ntfy, false, &cfg, Some(trace_id))
+                                .await;
                         log::info!("ntfy: text capture result: {:?}", result.status);
+                        if let Some(n) = n {
+                            n.result(&result, &display, None).await;
+                        }
                     });
                 }
             }

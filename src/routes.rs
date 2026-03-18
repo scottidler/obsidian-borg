@@ -7,6 +7,7 @@ use crate::AppState;
 use crate::assets;
 use crate::health::HealthResponse;
 use crate::pipeline;
+use crate::trace;
 use crate::types::{ContentKind, IngestMethod, IngestRequest, IngestResult, IngestStatus};
 
 #[derive(Debug, Deserialize)]
@@ -23,10 +24,19 @@ pub async fn ingest(State(state): State<AppState>, Json(request): Json<IngestReq
     log::info!("Received ingest request for URL: {}", request.url);
 
     let tags = request.tags.unwrap_or_default();
-
     let method = request.method.unwrap_or(IngestMethod::Http);
+    let trace_id = trace::generate(method);
+
+    if let Some(ref n) = state.notifier {
+        let _ = n.processing(&trace_id, "Processing...", None).await;
+    }
+
     let content = ContentKind::Url(request.url.clone());
-    let result = pipeline::process_content(content, tags, method, request.force, &state.config, None).await;
+    let result = pipeline::process_content(content, tags, method, request.force, &state.config, Some(trace_id)).await;
+
+    if let Some(ref n) = state.notifier {
+        n.result(&result, &request.url, None).await;
+    }
 
     match &result.status {
         IngestStatus::Failed { reason } => {
@@ -47,9 +57,25 @@ pub async fn ingest(State(state): State<AppState>, Json(request): Json<IngestReq
 pub async fn note(State(state): State<AppState>, Json(request): Json<NoteRequest>) -> Json<IngestResult> {
     log::info!("Received note request: {} chars", request.text.len());
 
+    let trace_id = trace::generate(IngestMethod::Http);
+    let display = if request.text.len() > 50 {
+        format!("{}...", &request.text[..50])
+    } else {
+        request.text.clone()
+    };
+
+    if let Some(ref n) = state.notifier {
+        let _ = n.processing(&trace_id, "Processing note...", None).await;
+    }
+
     let tags = request.tags.unwrap_or_default();
     let content = ContentKind::Text(request.text);
-    let result = pipeline::process_content(content, tags, IngestMethod::Http, false, &state.config, None).await;
+    let result =
+        pipeline::process_content(content, tags, IngestMethod::Http, false, &state.config, Some(trace_id)).await;
+
+    if let Some(ref n) = state.notifier {
+        n.result(&result, &display, None).await;
+    }
 
     match &result.status {
         IngestStatus::Failed { reason } => {
@@ -148,7 +174,27 @@ pub async fn ingest_multipart(State(state): State<AppState>, mut multipart: Mult
         });
     };
 
-    let result = pipeline::process_content(content, tags, IngestMethod::Http, force, &state.config, None).await;
+    let trace_id = trace::generate(IngestMethod::Http);
+    let display_filename = match &content {
+        ContentKind::Image { filename, .. }
+        | ContentKind::Pdf { filename, .. }
+        | ContentKind::Audio { filename, .. }
+        | ContentKind::Document { filename, .. } => filename.clone(),
+        _ => "file".to_string(),
+    };
+
+    if let Some(ref n) = state.notifier {
+        let _ = n
+            .processing(&trace_id, &format!("Processing file: {display_filename}..."), None)
+            .await;
+    }
+
+    let result =
+        pipeline::process_content(content, tags, IngestMethod::Http, force, &state.config, Some(trace_id)).await;
+
+    if let Some(ref n) = state.notifier {
+        n.result(&result, &format!("[file: {display_filename}]"), None).await;
+    }
 
     match &result.status {
         IngestStatus::Failed { reason } => {

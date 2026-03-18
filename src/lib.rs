@@ -183,7 +183,8 @@ pub async fn run_server(config: Config, _verbose: bool) -> Result<()> {
             let topic = ntfy_config.topic.clone();
             let token = ntfy_config.token.as_ref().and_then(|t| config::resolve_secret(t).ok());
             let cfg = config.clone();
-            tasks.spawn(async move { ntfy::run(server, topic, token, cfg).await });
+            let ntfy_notifier = notifier.clone();
+            tasks.spawn(async move { ntfy::run(server, topic, token, cfg, ntfy_notifier).await });
             println!(
                 "{} ntfy subscriber active (topic: {})",
                 "-->".green(),
