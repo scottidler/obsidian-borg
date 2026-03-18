@@ -311,6 +311,132 @@ pub fn resolve_ingest_url(url: Option<String>, clipboard: bool) -> Result<String
     eyre::bail!("No URL provided. Use a URL argument or --clipboard")
 }
 
+pub async fn run_reingest(
+    config: Config,
+    all: bool,
+    content_type: Option<String>,
+    domain: Option<String>,
+    source: Option<String>,
+    before: Option<String>,
+    after: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    use ledger::{EntryFilter, QueriedEntry};
+
+    if !all && source.is_none() && content_type.is_none() && domain.is_none() {
+        eyre::bail!("Specify --all, --source <URL>, --type <TYPE>, or --domain <DOMAIN> to select entries");
+    }
+
+    let ledger_file = ledger::ledger_path(&config);
+
+    // Content type filtering requires reading the vault note to check the type: field.
+    // For --type, we read each note's frontmatter after the ledger query.
+    let filter = EntryFilter {
+        source: source.clone(),
+        domain: domain.clone(),
+        before,
+        after,
+    };
+
+    let entries: Vec<QueriedEntry> = ledger::query_entries(&ledger_file, &filter)?;
+
+    // If --type filter is specified, filter by reading each note's frontmatter
+    let entries: Vec<QueriedEntry> = if let Some(ref type_filter) = content_type {
+        let vault_root = pipeline::expand_vault_root(&config.vault.root_path);
+        entries
+            .into_iter()
+            .filter(|e| {
+                if e.path == "-" {
+                    return false;
+                }
+                let note_path = vault_root.join(&e.path);
+                match std::fs::read_to_string(&note_path) {
+                    Ok(content) => {
+                        // Quick frontmatter type: field check
+                        content
+                            .lines()
+                            .any(|l| l.trim().starts_with("type:") && l.contains(type_filter))
+                    }
+                    Err(_) => false,
+                }
+            })
+            .collect()
+    } else {
+        entries
+    };
+
+    if entries.is_empty() {
+        println!("No matching entries found.");
+        return Ok(());
+    }
+
+    println!(
+        "{} {} entries{}",
+        if dry_run { "Would reingest" } else { "Reingesting" },
+        entries.len(),
+        if dry_run { " (dry run)" } else { "" }
+    );
+
+    for (i, entry) in entries.iter().enumerate() {
+        println!(
+            "  [{}/{}] {} - {} ({})",
+            i + 1,
+            entries.len(),
+            entry.date,
+            entry.title,
+            entry.source
+        );
+
+        if dry_run {
+            continue;
+        }
+
+        // Reingest by calling the daemon's ingest endpoint (same as CLI ingest)
+        let host = &config.hotkey.host;
+        let port = config.hotkey.port;
+        let endpoint = format!("http://{host}:{port}/ingest");
+
+        let body = serde_json::json!({
+            "url": entry.source,
+            "tags": [],
+            "force": false,
+            "method": "cli",
+        });
+
+        let client = reqwest::Client::new();
+        match client.post(&endpoint).json(&body).send().await {
+            Ok(response) => {
+                let result: types::IngestResult =
+                    response.json().await.context("Failed to parse response from daemon")?;
+                match &result.status {
+                    types::IngestStatus::Completed => {
+                        let title = result.title.as_deref().unwrap_or("Untitled");
+                        println!("    -> Replaced: \"{title}\"");
+                    }
+                    types::IngestStatus::Failed { reason } => {
+                        eprintln!("    -> Failed: {reason}");
+                    }
+                    other => {
+                        println!("    -> {:?}", other);
+                    }
+                }
+            }
+            Err(e) => {
+                if e.is_connect() {
+                    eyre::bail!("Cannot reach obsidian-borg at http://{host}:{port} - is the daemon running?");
+                }
+                eprintln!("    -> Error: {e}");
+            }
+        }
+    }
+
+    if !dry_run {
+        println!("Reingest complete.");
+    }
+
+    Ok(())
+}
+
 pub async fn run_ingest(
     config: Config,
     url: String,

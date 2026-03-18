@@ -2218,6 +2218,11 @@ fn vault_relative_path(note_path: &std::path::Path, vault_root: &str) -> Option<
         .map(|s| s.to_string())
 }
 
+/// Expand a vault root path (handling ~/) to an absolute PathBuf.
+pub fn expand_vault_root(path: &str) -> PathBuf {
+    expand_tilde(path)
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()

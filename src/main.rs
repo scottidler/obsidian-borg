@@ -53,5 +53,14 @@ async fn main() -> Result<()> {
         Some(Command::Sign) => obsidian_borg::run_sign(&config).await,
         Some(Command::Migrate { dry_run: _, apply }) => obsidian_borg::migrate::run_migrate(&config, apply).await,
         Some(Command::Audit { fix }) => obsidian_borg::audit::run_audit(&config, fix).await,
+        Some(Command::Reingest {
+            all,
+            r#type,
+            domain,
+            source,
+            before,
+            after,
+            dry_run,
+        }) => obsidian_borg::run_reingest(config, all, r#type, domain, source, before, after, dry_run).await,
     }
 }

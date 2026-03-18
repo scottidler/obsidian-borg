@@ -199,6 +199,114 @@ pub fn mark_replaced(ledger_path: &Path, line_number: usize) -> Result<()> {
     Ok(())
 }
 
+/// Filter criteria for querying ledger entries.
+#[derive(Debug, Default)]
+pub struct EntryFilter {
+    pub source: Option<String>,
+    pub domain: Option<String>,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// Extended completed entry with all fields for reingest.
+#[derive(Debug)]
+pub struct QueriedEntry {
+    pub date: String,
+    pub method: String,
+    pub title: String,
+    pub path: String,
+    pub source: String,
+    pub domain: String,
+    pub line_number: usize,
+}
+
+/// Query all completed entries from the ledger, applying optional filters.
+pub fn query_entries(ledger_path: &Path, filter: &EntryFilter) -> Result<Vec<QueriedEntry>> {
+    if !ledger_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .open(ledger_path)
+        .context("Failed to open Borg Ledger for reading")?;
+    file.lock_shared()
+        .context("Failed to acquire shared lock on Borg Ledger")?;
+
+    let content = fs::read_to_string(ledger_path).context("Failed to read Borg Ledger")?;
+    file.unlock().ok();
+
+    let mut entries = Vec::new();
+
+    for (line_number, line) in content.lines().enumerate() {
+        if !line.starts_with('|') || line.starts_with("| Date") || line.starts_with("|--") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('|').collect();
+        if cols.len() < 8 {
+            continue;
+        }
+        let status = cols[4].trim();
+        if status != "✅" {
+            continue;
+        }
+
+        let date = cols[1].trim().to_string();
+        let method = cols[3].trim().to_string();
+        let title_raw = cols[5].trim();
+        let title = title_raw
+            .strip_prefix("[[")
+            .and_then(|s| s.strip_suffix("]]"))
+            .unwrap_or(title_raw)
+            .to_string();
+
+        // Handle old (10 cols) vs new (11+ cols) format
+        let (path, source, domain) = if cols.len() >= 11 {
+            (
+                cols[6].trim().to_string(),
+                cols[7].trim().to_string(),
+                cols[8].trim().to_string(),
+            )
+        } else {
+            ("-".to_string(), cols[6].trim().to_string(), cols[7].trim().to_string())
+        };
+
+        // Apply filters
+        if let Some(ref f_source) = filter.source
+            && source != *f_source
+        {
+            continue;
+        }
+        if let Some(ref f_domain) = filter.domain
+            && domain != *f_domain
+        {
+            continue;
+        }
+        if let Some(ref f_before) = filter.before
+            && date.as_str() >= f_before.as_str()
+        {
+            continue;
+        }
+        if let Some(ref f_after) = filter.after
+            && date.as_str() <= f_after.as_str()
+        {
+            continue;
+        }
+
+        entries.push(QueriedEntry {
+            date,
+            method,
+            title,
+            path,
+            source,
+            domain,
+            line_number,
+        });
+    }
+
+    Ok(entries)
+}
+
 /// Append a row to the Borg Ledger table.
 pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
     ensure_ledger_exists(ledger_path)?;
@@ -620,5 +728,132 @@ mod tests {
     #[test]
     fn test_replaced_status_display() {
         assert_eq!(format!("{}", LedgerStatus::Replaced), "🔄");
+    }
+
+    #[test]
+    fn test_query_entries_no_filter() {
+        let path = temp_ledger_path().with_file_name("test-query-no-filter.md");
+        cleanup(&path);
+
+        for i in 1..=3 {
+            let entry = LedgerEntry {
+                date: format!("2026-03-{:02}", i),
+                time: "10:00".to_string(),
+                method: IngestMethod::Cli,
+                status: LedgerStatus::Completed,
+                title: Some(format!("Note {i}")),
+                path: Some(format!("notes/note-{i}.md")),
+                source: format!("https://example.com/{i}"),
+                domain: Some(if i <= 2 { "ai" } else { "tech" }.to_string()),
+                trace_id: None,
+            };
+            append_entry(&path, &entry).expect("append");
+        }
+
+        let filter = EntryFilter::default();
+        let entries = query_entries(&path, &filter).expect("query");
+        assert_eq!(entries.len(), 3);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_query_entries_domain_filter() {
+        let path = temp_ledger_path().with_file_name("test-query-domain.md");
+        cleanup(&path);
+
+        for (i, domain) in [("ai", 1), ("ai", 2), ("tech", 3)] {
+            let entry = LedgerEntry {
+                date: format!("2026-03-{:02}", domain),
+                time: "10:00".to_string(),
+                method: IngestMethod::Cli,
+                status: LedgerStatus::Completed,
+                title: Some(format!("Note {}", domain)),
+                path: Some(format!("notes/note-{}.md", domain)),
+                source: format!("https://example.com/{}", domain),
+                domain: Some(i.to_string()),
+                trace_id: None,
+            };
+            append_entry(&path, &entry).expect("append");
+        }
+
+        let filter = EntryFilter {
+            domain: Some("ai".to_string()),
+            ..Default::default()
+        };
+        let entries = query_entries(&path, &filter).expect("query");
+        assert_eq!(entries.len(), 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_query_entries_date_filter() {
+        let path = temp_ledger_path().with_file_name("test-query-date.md");
+        cleanup(&path);
+
+        for i in 1..=5 {
+            let entry = LedgerEntry {
+                date: format!("2026-03-{:02}", i),
+                time: "10:00".to_string(),
+                method: IngestMethod::Cli,
+                status: LedgerStatus::Completed,
+                title: Some(format!("Note {i}")),
+                path: Some(format!("notes/note-{i}.md")),
+                source: format!("https://example.com/{i}"),
+                domain: Some("ai".to_string()),
+                trace_id: None,
+            };
+            append_entry(&path, &entry).expect("append");
+        }
+
+        // After 2026-03-02 should get entries 03, 04, 05
+        let filter = EntryFilter {
+            after: Some("2026-03-02".to_string()),
+            ..Default::default()
+        };
+        let entries = query_entries(&path, &filter).expect("query");
+        assert_eq!(entries.len(), 3);
+
+        // Before 2026-03-04 should get entries 01, 02, 03
+        let filter = EntryFilter {
+            before: Some("2026-03-04".to_string()),
+            ..Default::default()
+        };
+        let entries = query_entries(&path, &filter).expect("query");
+        assert_eq!(entries.len(), 3);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_query_entries_source_filter() {
+        let path = temp_ledger_path().with_file_name("test-query-source.md");
+        cleanup(&path);
+
+        for i in 1..=3 {
+            let entry = LedgerEntry {
+                date: format!("2026-03-{:02}", i),
+                time: "10:00".to_string(),
+                method: IngestMethod::Cli,
+                status: LedgerStatus::Completed,
+                title: Some(format!("Note {i}")),
+                path: Some(format!("notes/note-{i}.md")),
+                source: format!("https://example.com/{i}"),
+                domain: Some("ai".to_string()),
+                trace_id: None,
+            };
+            append_entry(&path, &entry).expect("append");
+        }
+
+        let filter = EntryFilter {
+            source: Some("https://example.com/2".to_string()),
+            ..Default::default()
+        };
+        let entries = query_entries(&path, &filter).expect("query");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].source, "https://example.com/2");
+
+        cleanup(&path);
     }
 }

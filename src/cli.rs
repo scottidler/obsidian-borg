@@ -80,6 +80,30 @@ pub enum Command {
         #[arg(long)]
         fix: bool,
     },
+    /// Reingest existing entries through the current pipeline
+    Reingest {
+        /// Reingest all completed entries
+        #[arg(long)]
+        all: bool,
+        /// Filter by content type (youtube, article, github, social, reddit)
+        #[arg(long, value_name = "TYPE")]
+        r#type: Option<String>,
+        /// Filter by domain (ai, tech, football, etc.)
+        #[arg(long)]
+        domain: Option<String>,
+        /// Reingest a specific URL
+        #[arg(long)]
+        source: Option<String>,
+        /// Filter entries ingested before date (YYYY-MM-DD)
+        #[arg(long)]
+        before: Option<String>,
+        /// Filter entries ingested after date (YYYY-MM-DD)
+        #[arg(long)]
+        after: Option<String>,
+        /// Preview without reingesting
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -485,6 +509,68 @@ mod tests {
         match cli.command {
             Some(Command::Daemon(opts)) => assert!(opts.start),
             _ => panic!("expected Daemon"),
+        }
+    }
+
+    #[test]
+    fn test_reingest_all() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "reingest", "--all"]).expect("parse");
+        match cli.command {
+            Some(Command::Reingest { all, dry_run, .. }) => {
+                assert!(all);
+                assert!(!dry_run);
+            }
+            _ => panic!("expected Reingest"),
+        }
+    }
+
+    #[test]
+    fn test_reingest_dry_run_with_type() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "reingest", "--all", "--type", "youtube", "--dry-run"])
+            .expect("parse");
+        match cli.command {
+            Some(Command::Reingest {
+                all, r#type, dry_run, ..
+            }) => {
+                assert!(all);
+                assert_eq!(r#type, Some("youtube".to_string()));
+                assert!(dry_run);
+            }
+            _ => panic!("expected Reingest"),
+        }
+    }
+
+    #[test]
+    fn test_reingest_source() {
+        let cli = Cli::try_parse_from(["obsidian-borg", "reingest", "--source", "https://example.com"]).expect("parse");
+        match cli.command {
+            Some(Command::Reingest { source, all, .. }) => {
+                assert!(!all);
+                assert_eq!(source, Some("https://example.com".to_string()));
+            }
+            _ => panic!("expected Reingest"),
+        }
+    }
+
+    #[test]
+    fn test_reingest_domain_and_date() {
+        let cli = Cli::try_parse_from([
+            "obsidian-borg",
+            "reingest",
+            "--all",
+            "--domain",
+            "ai",
+            "--after",
+            "2026-03-01",
+        ])
+        .expect("parse");
+        match cli.command {
+            Some(Command::Reingest { all, domain, after, .. }) => {
+                assert!(all);
+                assert_eq!(domain, Some("ai".to_string()));
+                assert_eq!(after, Some("2026-03-01".to_string()));
+            }
+            _ => panic!("expected Reingest"),
         }
     }
 }
