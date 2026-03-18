@@ -19,6 +19,7 @@ pub mod ledger;
 pub mod logging;
 pub mod markdown;
 pub mod migrate;
+pub mod notify;
 pub mod ntfy;
 pub mod ocr;
 pub mod pipeline;
