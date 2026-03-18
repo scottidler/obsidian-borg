@@ -307,14 +307,15 @@ pub fn query_entries(ledger_path: &Path, filter: &EntryFilter) -> Result<Vec<Que
     Ok(entries)
 }
 
-/// Append a row to the Borg Ledger table.
+/// Insert a row at the top of the Borg Ledger table (newest first).
 pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
     ensure_ledger_exists(ledger_path)?;
 
     let file = OpenOptions::new()
-        .append(true)
+        .read(true)
+        .write(true)
         .open(ledger_path)
-        .context("Failed to open Borg Ledger for appending")?;
+        .context("Failed to open Borg Ledger for writing")?;
     file.lock_exclusive()
         .context("Failed to acquire exclusive lock on Borg Ledger")?;
 
@@ -328,7 +329,7 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
     let trace_display = entry.trace_id.as_deref().unwrap_or("-");
 
     let row = format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         entry.date,
         entry.time,
         entry.method,
@@ -340,11 +341,21 @@ pub fn append_entry(ledger_path: &Path, entry: &LedgerEntry) -> Result<()> {
         trace_display,
     );
 
-    use std::io::Write;
-    let mut file_ref = &file;
-    file_ref
-        .write_all(row.as_bytes())
-        .context("Failed to write Borg Ledger entry")?;
+    // Read existing content, find the separator row, insert after it
+    let content = fs::read_to_string(ledger_path).context("Failed to read Borg Ledger")?;
+    let mut lines: Vec<&str> = content.lines().collect();
+
+    // Find the separator row (|---...) and insert after it
+    let insert_pos = lines
+        .iter()
+        .position(|l| l.starts_with("|--"))
+        .map(|i| i + 1)
+        .unwrap_or(lines.len());
+
+    lines.insert(insert_pos, &row);
+
+    let new_content = format!("{}\n", lines.join("\n"));
+    fs::write(ledger_path, new_content).context("Failed to write Borg Ledger")?;
     file.unlock().ok();
 
     Ok(())
