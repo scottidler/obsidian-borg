@@ -27,7 +27,7 @@ TABLE WITHOUT ID
   method as "Via",
   domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date = date(today)
-SORT time DESC
+SORT file.ctime DESC
 ```
 
 ## 📅 Yesterday
@@ -39,7 +39,7 @@ TABLE WITHOUT ID
   method as "Via",
   domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date = date(today) - dur(1 day)
-SORT time DESC
+SORT file.ctime DESC
 ```
 
 ## 📆 This Week
@@ -51,7 +51,7 @@ TABLE WITHOUT ID
   method as "Via",
   domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date >= date(today) - dur(7 day) AND date < date(today) - dur(1 day)
-SORT date DESC
+SORT file.ctime DESC
 ```
 
 ## 📅 This Month
@@ -63,7 +63,7 @@ TABLE WITHOUT ID
   method as "Via",
   domain as "Domain"
 WHERE (source != null OR asset != null OR method != null) AND date >= date(today) - dur(30 day) AND date < date(today) - dur(7 day)
-SORT date DESC
+SORT file.ctime DESC
 ```
 
 ## 📊 Stats
